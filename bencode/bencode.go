@@ -2,6 +2,7 @@ package bencode
 
 import (
 	"bytes"
+	"sort"
 	"errors"
 	"fmt"
 	"strconv"
@@ -65,9 +66,14 @@ func encodeList(x []interface{}) (data []byte, err error) {
 
 func encodeDict(x map[string]interface{}) (data []byte, err error) {
 	data = append(data, 'd')
-
+	var keys []string
 	var buf []byte
-	for k, v := range x {
+	for k := range x {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := x[k]
 		buf, err = Encode(k)
 		if err != nil {
 			return

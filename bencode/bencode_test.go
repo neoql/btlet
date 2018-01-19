@@ -44,7 +44,7 @@ func checkDecodeList(t *testing.T) {
 }
 
 func checkDecodeDict(t *testing.T) {
-	x, err := Decode([]byte("d4:name3:Tom3:agei20e7:friendsl4:Jack5:Marryee"))
+	x, err := Decode([]byte("d3:agei20e7:friendsl4:Jack5:Marrye4:name3:Tome"))
 
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,8 @@ func checkEncodeDict(t *testing.T) {
 		t.Fatal(err)
 	}
 	
-	if string(s) != "d4:name3:Tom3:agei20e7:friendsl4:Jack5:Marryee" {
+	if string(s) != "d3:agei20e7:friendsl4:Jack5:Marrye4:name3:Tome" {
+		t.Log(string(s))
 		t.Error("encode dict error")
 	}
 }
