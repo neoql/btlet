@@ -1,10 +1,11 @@
 package dht
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"sync"
-	// "time"
+	"time"
 
 	"github.com/neoql/btlet/tools"
 	"github.com/neoql/container/queue"
@@ -36,7 +37,6 @@ func NewCrawlerWithBuffer(buf *queue.Queue) *Crawler {
 	dht := newDHTCore()
 
 	// dht.transactionManager.CleanPeriod = time.Minute * 5
-	// dht.transactionManager.Expiration = 0
 	dht.AddTransaction(transaction)
 	dht.RequestHandler = transaction.OnRequest
 
@@ -90,6 +90,10 @@ func newCrawlTransaction(id string, buf *queue.Queue) *crawlTransaction {
 
 func (transaction *crawlTransaction) ID() string {
 	return transaction.id
+}
+
+func (transaction *crawlTransaction) ShelfLife() time.Duration {
+	return time.Second * 30
 }
 
 func (transaction *crawlTransaction) OnLaunch(dht *dhtCore) {
@@ -247,7 +251,8 @@ func (task *crawlTask) AddFiltNode(nd *node) {
 	task.lock.Lock()
 	defer task.lock.Unlock()
 
-	if task.filter.TestAndAddString(nd.id) {
+	key := fmt.Sprintf("%s:%d", nd.addr.IP, nd.addr.Port)
+	if task.filter.TestAndAddString(key) {
 		return
 	}
 	task.total++
@@ -264,7 +269,7 @@ func (task *crawlTask) AddFiltNode(nd *node) {
 		task.shorterTotal++
 	}
 
-	if task.longerTotal >= 16 {
+	for task.longerTotal >= (task.shortPrefixLen+1)*8 && task.longPrefixLen < 21 {
 		task.shortPrefixLen = task.longPrefixLen
 		task.longPrefixLen = 21
 		task.longerTotal = task.longerTotal - task.shorterTotal
@@ -283,7 +288,8 @@ func (task *crawlTask) Check(nd *node) bool {
 	task.lock.RLock()
 	defer task.lock.RUnlock()
 
-	if task.filter.TestString(nd.id) {
+	key := fmt.Sprintf("%s:%d", nd.addr.IP, nd.addr.Port)
+	if task.filter.TestString(key) {
 		return false
 	}
 

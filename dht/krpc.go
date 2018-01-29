@@ -9,6 +9,7 @@ import (
 
 type transaction interface {
 	ID() string
+	ShelfLife() time.Duration
 	Timeout(dht *dhtCore) bool
 	OnLaunch(dht *dhtCore)
 	OnResponse(dht *dhtCore, nd *node, resp map[string]interface{})
@@ -27,10 +28,10 @@ func (context *transactionContext) Fresh() {
 	context.time = time.Now()
 }
 
-func (context *transactionContext) Expire(expiration time.Duration) bool {
+func (context *transactionContext) Expired() bool {
 	context.lock.RLock()
 	defer context.lock.RUnlock()
-	return time.Now().Sub(context.time) > expiration
+	return time.Now().Sub(context.time) > context.transaction.ShelfLife()
 }
 
 type transactionManager struct {
@@ -38,7 +39,6 @@ type transactionManager struct {
 	dht          *dhtCore
 	transactions map[string]*transactionContext
 
-	Expiration  time.Duration
 	CleanPeriod time.Duration
 }
 
@@ -47,7 +47,6 @@ func newTransactionManager(dht *dhtCore) *transactionManager {
 		dht:          dht,
 		transactions: make(map[string]*transactionContext),
 
-		Expiration:  time.Second * 30,
 		CleanPeriod: time.Second * 10,
 	}
 }
@@ -80,7 +79,7 @@ func (manager *transactionManager) PeriodicClean() {
 	for range tick {
 		manager.lock.RLock()
 		for id, ctx := range manager.transactions {
-			if ctx.Expire(manager.Expiration) {
+			if ctx.Expired() {
 				manager.lock.RUnlock()
 				manager.remove(id)
 				manager.lock.RLock()
