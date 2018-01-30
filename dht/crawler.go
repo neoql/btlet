@@ -70,7 +70,9 @@ type crawlTransaction struct {
 	id         string
 	LaunchUrls []string
 
-	task         *crawlTask
+	lock         sync.RWMutex
+	target       string
+	filter       *nodeFilter
 	resultBuffer *queue.Queue
 }
 
@@ -83,7 +85,8 @@ func newCrawlTransaction(id string, buf *queue.Queue) *crawlTransaction {
 			"dht.transmissionbt.com:6881",
 		},
 
-		task:         newCrawTask(),
+		target:       tools.RandomString(20),
+		filter:       newNodeFilter(),
 		resultBuffer: buf,
 	}
 }
@@ -94,6 +97,12 @@ func (transaction *crawlTransaction) ID() string {
 
 func (transaction *crawlTransaction) ShelfLife() time.Duration {
 	return time.Second * 30
+}
+
+func (transaction *crawlTransaction) Target() string {
+	transaction.lock.RLock()
+	defer transaction.lock.RUnlock()
+	return transaction.target
 }
 
 func (transaction *crawlTransaction) OnLaunch(dht *dhtCore) {
@@ -107,7 +116,7 @@ func (transaction *crawlTransaction) OnLaunch(dht *dhtCore) {
 		nodes[i] = &node{addr, ""}
 	}
 
-	transaction.joinDHT(dht, nodes)
+	transaction.findTargetNode(dht, transaction.Target(), nodes...)
 }
 
 func (transaction *crawlTransaction) OnFinish(dht *dhtCore) {}
@@ -115,7 +124,7 @@ func (transaction *crawlTransaction) OnFinish(dht *dhtCore) {}
 func (transaction *crawlTransaction) OnResponse(dht *dhtCore,
 	nd *node, resp map[string]interface{}) {
 
-	transaction.task.AddFiltNode(nd)
+	transaction.filter.AddNode(nd)
 
 	if nds, ok := resp["nodes"]; ok {
 		nodes, err := unpackNodes(nds.(string))
@@ -123,20 +132,10 @@ func (transaction *crawlTransaction) OnResponse(dht *dhtCore,
 			// TODO: handle error
 		}
 
-		target := transaction.task.Target()
+		target := transaction.Target()
 		for _, nd := range nodes {
-			if transaction.task.Check(nd) {
-				msg, err := makeQuery("find_node", transaction.id, map[string]interface{}{
-					"target": target,
-					"id":     makeID(nd.id, dht.NodeID),
-				})
-
-				if err != nil {
-					// TODO: handle msg
-					continue
-				}
-
-				dht.SendMsg(nd, msg)
+			if transaction.filter.Check(nd) {
+				transaction.findTargetNode(dht, target, nd)
 			}
 		}
 	}
@@ -167,34 +166,25 @@ func (transaction *crawlTransaction) OnRequest(dht *dhtCore,
 	default:
 	}
 
-	if transaction.task.Check(nd) {
-		msg, err := makeQuery("find_node", transaction.id, map[string]interface{}{
-			"target": transaction.task.Target(),
-			"id":     makeID(nd.id, dht.NodeID),
-		})
-
-		if err != nil {
-			// TODO: handle msg
-			return
-		}
-
-		dht.SendMsg(nd, msg)
+	if transaction.filter.Check(nd) {
+		transaction.findTargetNode(dht, transaction.Target(), nd)
 	}
 }
 
 func (transaction *crawlTransaction) Timeout(dht *dhtCore) bool {
-	if transaction.task.RespTotal() == 0 {
-		transaction.OnLaunch(dht)
-	} else {
-		nodes := transaction.task.Reset()
-		transaction.joinDHT(dht, nodes)
-	}
+	defer transaction.OnLaunch(dht)
+
+	transaction.lock.Lock()
+	defer transaction.lock.Unlock()
+
+	len := rand.Int() % 20
+	transaction.target = transaction.target[:len] + tools.RandomString(uint(20-len))
+	transaction.filter.Reset()
 
 	return false
 }
 
-func (transaction *crawlTransaction) joinDHT(dht *dhtCore, nodes []*node) {
-	target := transaction.task.Target()
+func (transaction *crawlTransaction) findTargetNode(dht *dhtCore, target string, nodes ...*node) {
 	for _, nd := range nodes {
 		msg, err := makeQuery("find_node", transaction.id, map[string]interface{}{
 			"target": target,
@@ -216,125 +206,35 @@ func makeID(dst string, id string) string {
 	return dst[:15] + id[15:]
 }
 
-type crawlTask struct {
-	target  string
-	tgtLock sync.RWMutex
-
-	lock           sync.RWMutex
-	filter         *bloom.BloomFilter
-	buf            []*node
-	bufSize        int
-	tail           int
-	total          int
-	longPrefixLen  int
-	shortPrefixLen int
-	longerTotal    int
-	shorterTotal   int
+type nodeFilter struct {
+	lock sync.RWMutex
+	core *bloom.BloomFilter
 }
 
-func newCrawTask() *crawlTask {
-	return &crawlTask{
-		filter:         bloom.NewWithEstimates(8*1024, 0.001),
-		buf:            make([]*node, 16),
-		bufSize:        0,
-		target:         tools.RandomString(20),
-		tail:           0,
-		total:          0,
-		longPrefixLen:  21,
-		shortPrefixLen: 0,
-		longerTotal:    0,
-		shorterTotal:   0,
+func newNodeFilter() *nodeFilter {
+	return &nodeFilter{
+		core: bloom.NewWithEstimates(8*1024, 0.001),
 	}
 }
 
-func (task *crawlTask) AddFiltNode(nd *node) {
-	task.lock.Lock()
-	defer task.lock.Unlock()
+func (filter *nodeFilter) AddNode(nd *node) {
+	filter.lock.Lock()
+	filter.lock.Unlock()
 
 	key := fmt.Sprintf("%s:%d", nd.addr.IP, nd.addr.Port)
-	if task.filter.TestAndAddString(key) {
-		return
-	}
-	task.total++
-
-	cpl := tools.CommonPrefixLen(nd.id, task.Target())
-
-	if cpl <= task.shortPrefixLen {
-		return
-	}
-	task.longerTotal++
-
-	if cpl <= task.longPrefixLen {
-		task.longPrefixLen = cpl
-		task.shorterTotal++
-	}
-
-	for task.longerTotal >= (task.shortPrefixLen+1)*8 && task.longPrefixLen < 21 {
-		task.shortPrefixLen = task.longPrefixLen
-		task.longPrefixLen = 21
-		task.longerTotal = task.longerTotal - task.shorterTotal
-		task.shorterTotal = 0
-	}
-
-	if task.buf[task.tail] == nil {
-		task.bufSize++
-	}
-
-	task.buf[task.tail] = nd
-	task.tail = (task.tail + 1) % 16
+	filter.core.AddString(key)
 }
 
-func (task *crawlTask) Check(nd *node) bool {
-	task.lock.RLock()
-	defer task.lock.RUnlock()
+func (filter *nodeFilter) Check(nd *node) bool {
+	filter.lock.RLock()
+	defer filter.lock.RUnlock()
 
 	key := fmt.Sprintf("%s:%d", nd.addr.IP, nd.addr.Port)
-	if task.filter.TestString(key) {
-		return false
-	}
-
-	if tools.CommonPrefixLen(nd.id, task.Target()) < task.shortPrefixLen {
-		return false
-	}
-
-	return true
+	return !filter.core.TestString(key)
 }
 
-func (task *crawlTask) Reset() (nodes []*node) {
-	task.lock.Lock()
-	defer task.lock.Unlock()
-	task.tgtLock.Lock()
-	defer task.tgtLock.Unlock()
-
-	task.filter.ClearAll()
-
-	nodes = task.buf[:task.bufSize+1]
-	task.buf = make([]*node, 16)
-	task.bufSize = 0
-	task.tail = 0
-
-	len := rand.Int() % task.shortPrefixLen
-	task.target = task.target[:len] + tools.RandomString(uint(20-len))
-	task.total = 0
-
-	task.longPrefixLen = 21
-	task.shortPrefixLen = 0
-	task.longerTotal = 0
-	task.shorterTotal = 0
-
-	return
-}
-
-func (task *crawlTask) RespTotal() int {
-	task.lock.RLock()
-	defer task.lock.RUnlock()
-
-	return task.total
-}
-
-func (task *crawlTask) Target() string {
-	task.tgtLock.RLock()
-	defer task.tgtLock.RUnlock()
-
-	return task.target
+func (filter *nodeFilter) Reset() {
+	filter.lock.Lock()
+	filter.lock.Unlock()
+	filter.core.ClearAll()
 }
