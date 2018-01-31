@@ -10,12 +10,19 @@ import (
 
 // Decode decodes a bencoded string to string, int, list or map.
 func Decode(data []byte) (obj interface{}, err error) {
+	obj, _, err = DecodeWithExcess(data)
+	return
+}
+
+// DecodeWithExcess decodes a bencoded string to string, int, list or map
+// and returns excess.
+func DecodeWithExcess(data []byte) (obj interface{}, excess []byte, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = e.(error)
 		}
 	}()
-	obj, _ = deocdeObj(data)
+	obj, excess = deocdeObj(data)
 	return
 }
 

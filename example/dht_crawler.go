@@ -4,32 +4,44 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/deckarep/golang-set"
+	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
+
+	"github.com/deckarep/golang-set"
 )
 
-var s mapset.Set
-
 func main() {
-	s = mapset.NewSet()
-
 	c := dht.NewCrawler()
+	s := mapset.NewSet()
+
 	c.Run()
-
 	fmt.Println("Start crawl ...")
+	ch := c.ResultChan()
 
-	go statistic()
-	for r := range c.ResultChan() {
-		fmt.Printf("%x\n", r.InfoHash)
-		s.Add(r.InfoHash)
+	for i := 0; i < 64; i++ {
+		go func() {
+			for r := range ch {
+				if s.Contains(r.InfoHash) {
+					continue
+				}
+				address := fmt.Sprintf("%s:%d", r.PeerIP, r.PeerPort)
+				meta, err := bt.FetchMetadata(r.InfoHash, address)
+				if err != nil {
+					continue
+				} else {
+					s.Add(r.InfoHash)
+					fmt.Println(meta["name"])
+				}
+			}
+		}()
 	}
-}
 
-func statistic() {
 	total := 0
 	for range time.Tick(time.Minute) {
 		num := s.Cardinality()
-		fmt.Printf("There are %d new hashes crawled last minute, total is % d\n", num-total, num)
+		fmt.Println("----------------------------------------------------------------")
+		fmt.Printf("Crawled %d magnet last minute\n", num-total)
+		fmt.Println("----------------------------------------------------------------")
 		total = num
 	}
 }
