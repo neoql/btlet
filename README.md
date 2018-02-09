@@ -2,7 +2,7 @@
 
 通过实现BT协议族中的部分协议来完成一些toolkit
 
-* [DHT-Spider](#DHT-Spider)
+* [DHT-Spider](./README.md#dht-spider)
 
 ## Install
 
