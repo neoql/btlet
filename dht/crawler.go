@@ -46,12 +46,23 @@ func NewCrawlerWithBuffer(buf *queue.Queue) *Crawler {
 	}
 }
 
+// SetAddress set the address which dht will bind
+func (crawler *Crawler) SetAddress(ip string, port int16) {
+	crawler.dht.IP = ip
+	crawler.dht.Port = port
+}
+
+// SetWorkdersTotal set the workers total
+func (crawler *Crawler) SetWorkdersTotal(x int) {
+	crawler.dht.WorkersTotal = x
+}
+
 // Run will launch the crawler
 func (crawler *Crawler) Run() error {
 	return crawler.dht.Run()
 }
 
-// ResultChan returns an info hash channel
+// ResultChan returns a Result channel
 func (crawler *Crawler) ResultChan() chan Result {
 	ch := make(chan Result)
 	go func() {
@@ -59,6 +70,7 @@ func (crawler *Crawler) ResultChan() chan Result {
 			result, flag := crawler.resultBuffer.Pop()
 			if !flag {
 				close(ch)
+				break
 			}
 			ch <- result.(Result)
 		}
