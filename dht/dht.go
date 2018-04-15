@@ -60,12 +60,10 @@ func (dht *dhtCore) Run() (err error) {
 	}
 
 	dht.launch()
-	go dht.transactionManager.PeriodicClean()
-
 	return
 }
 
-func (dht *dhtCore) AddTransaction(t transaction) error {
+func (dht *dhtCore) AddTransaction(t Transaction) error {
 	return dht.transactionManager.Add(t)
 }
 

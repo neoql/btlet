@@ -7,31 +7,47 @@ import (
 	"time"
 )
 
-type transaction interface {
+// Transaction is KRPC transaction.
+type Transaction interface {
 	ID() string
 	ShelfLife() time.Duration
-	Timeout(dht *dhtCore) bool
+	OnTimeout(dht *dhtCore) bool
 	OnLaunch(dht *dhtCore)
 	OnResponse(dht *dhtCore, nd *node, resp map[string]interface{})
 	OnFinish(dht *dhtCore)
 }
 
 type transactionContext struct {
-	lock        sync.RWMutex
-	transaction transaction
-	time        time.Time
+	transaction Transaction
+	alive       chan struct{}
+}
+
+func newTransactionContext(t Transaction) *transactionContext {
+	return &transactionContext{
+		transaction: t,
+		alive:       make(chan struct{}),
+	}
 }
 
 func (context *transactionContext) Fresh() {
-	context.lock.Lock()
-	defer context.lock.Unlock()
-	context.time = time.Now()
+	context.alive <- struct{}{}
 }
 
-func (context *transactionContext) Expired() bool {
-	context.lock.RLock()
-	defer context.lock.RUnlock()
-	return time.Now().Sub(context.time) > context.transaction.ShelfLife()
+func (context *transactionContext) loop(dht *dhtCore, rmself func()) {
+	context.transaction.OnLaunch(dht)
+
+	for {
+		timeout := time.NewTimer(context.transaction.ShelfLife())
+		select {
+		case <-context.alive:
+			timeout.Stop()
+		case <-timeout.C:
+			if context.transaction.OnTimeout(dht) {
+				context.transaction.OnFinish(dht)
+				break
+			}
+		}
+	}
 }
 
 type transactionManager struct {
@@ -51,7 +67,7 @@ func newTransactionManager(dht *dhtCore) *transactionManager {
 	}
 }
 
-func (manager *transactionManager) Add(t transaction) error {
+func (manager *transactionManager) Add(t Transaction) error {
 	manager.lock.Lock()
 	defer manager.lock.Unlock()
 
@@ -59,9 +75,10 @@ func (manager *transactionManager) Add(t transaction) error {
 		return errors.New("transation id is already exist")
 	}
 
-	manager.transactions[t.ID()] = &transactionContext{transaction: t, time: time.Now()}
+	context := newTransactionContext(t)
+	manager.transactions[t.ID()] = context
 	if manager.dht.conn != nil {
-		t.OnLaunch(manager.dht)
+		go context.loop(manager.dht, manager.mkRemoveCallback(t))
 	}
 
 	return nil
@@ -74,18 +91,9 @@ func (manager *transactionManager) remove(transactionID string) {
 	delete(manager.transactions, transactionID)
 }
 
-func (manager *transactionManager) PeriodicClean() {
-	tick := time.Tick(manager.CleanPeriod)
-	for range tick {
-		manager.lock.RLock()
-		for id, ctx := range manager.transactions {
-			if ctx.Expired() {
-				manager.lock.RUnlock()
-				manager.remove(id)
-				manager.lock.RLock()
-			}
-		}
-		manager.lock.RUnlock()
+func (manager *transactionManager) mkRemoveCallback(t Transaction) func() {
+	return func() {
+		manager.remove(t.ID())
 	}
 }
 
@@ -94,7 +102,7 @@ func (manager *transactionManager) launchAll() {
 	defer manager.lock.RUnlock()
 
 	for _, context := range manager.transactions {
-		context.transaction.OnLaunch(manager.dht)
+		go context.loop(manager.dht, manager.mkRemoveCallback(context.transaction))
 	}
 }
 

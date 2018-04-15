@@ -183,7 +183,7 @@ func (transaction *crawlTransaction) OnRequest(dht *dhtCore,
 	}
 }
 
-func (transaction *crawlTransaction) Timeout(dht *dhtCore) bool {
+func (transaction *crawlTransaction) OnTimeout(dht *dhtCore) bool {
 	defer transaction.OnLaunch(dht)
 
 	transaction.lock.Lock()
