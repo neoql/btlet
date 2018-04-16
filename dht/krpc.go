@@ -54,16 +54,12 @@ type transactionManager struct {
 	lock         sync.RWMutex
 	dht          *dhtCore
 	transactions map[string]*transactionContext
-
-	CleanPeriod time.Duration
 }
 
 func newTransactionManager(dht *dhtCore) *transactionManager {
 	return &transactionManager{
 		dht:          dht,
 		transactions: make(map[string]*transactionContext),
-
-		CleanPeriod: time.Second * 10,
 	}
 }
 

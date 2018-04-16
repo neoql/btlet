@@ -22,7 +22,3 @@ func unpackNodes(data string) (nodes []*node, err error) {
 
 	return
 }
-
-func packNodes(nodes []*node) string {
-	return ""
-}

@@ -8,13 +8,14 @@ import (
 )
 
 func main() {
-	s := btlet.NewSniffer()
+	p := btlet.NewSimplePipelineWithBuf(512)
+	s := btlet.NewSniffer(p)
 	s.Run()
 
 	total := 0
 	go statistic(&total)
 	fmt.Println("Start crawl ...")
-	for meta := range s.MetaChan() {
+	for meta := range p.MetaChan() {
 		fmt.Println("--------------------------------------------------------")
 		fmt.Printf("magnet:?xt=urn:btih:%x\n", meta.Hash)
 		fmt.Printf("name: %s\n", meta.Name)

@@ -24,7 +24,6 @@ type dhtCore struct {
 	IP           string
 	Port         int16
 	NodeID       string
-	WorkersTotal int
 }
 
 func newDHTCore() *dhtCore {
@@ -32,7 +31,6 @@ func newDHTCore() *dhtCore {
 		IP:           "0.0.0.0",
 		Port:         6881,
 		NodeID:       tools.RandomString(20),
-		WorkersTotal: 32,
 	}
 	core.transactionManager = newTransactionManager(core)
 
@@ -44,23 +42,23 @@ func (dht *dhtCore) Run() (err error) {
 		return
 	}
 
-	for i := 0; i < dht.WorkersTotal; i++ {
-		go func() {
-			for {
-				buf := make([]byte, 8196)
-				n, addr, err := dht.conn.ReadFromUDP(buf)
-				if err != nil {
-					// TODO: handle error
-					continue
-				}
-
-				dht.handleMsg(addr, buf[:n])
-			}
-		}()
-	}
-
+	go dht.loop()
 	dht.launch()
+
 	return
+}
+
+func (dht *dhtCore) loop() {
+	for {
+		buf := make([]byte, 8196)
+		n, addr, err := dht.conn.ReadFromUDP(buf)
+		if err != nil {
+			// TODO: handle error
+			continue
+		}
+
+		dht.handleMsg(addr, buf[:n])
+	}
 }
 
 func (dht *dhtCore) AddTransaction(t Transaction) error {

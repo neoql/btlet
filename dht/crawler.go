@@ -8,74 +8,28 @@ import (
 	"time"
 
 	"github.com/neoql/btlet/tools"
-	"github.com/neoql/container/queue"
-
 	"github.com/willf/bloom"
 )
 
-// Result contains info hash and peer addr.
-type Result struct {
-	InfoHash string
-	PeerIP   net.IP
-	PeerPort int
-}
-
 // Crawler can crawl info hash from DHT.
 type Crawler struct {
-	dht          *dhtCore
-	resultBuffer *queue.Queue
+	*dhtCore
 }
 
 // NewCrawler returns a new Crawler instance.
-func NewCrawler() *Crawler {
-	return NewCrawlerWithBuffer(queue.New())
-}
+func NewCrawler(ip string, port int16, 
+	callback func(string, net.IP, int)) *Crawler {
 
-// NewCrawlerWithBuffer returns a new Crawler instance with assign buffer
-func NewCrawlerWithBuffer(buf *queue.Queue) *Crawler {
-	transaction := newCrawlTransaction(tools.RandomString(2), buf)
+	transaction := newCrawlTransaction(tools.RandomString(2), callback)
 	dht := newDHTCore()
+	
+	dht.IP	 = ip
+	dht.Port = port
 
-	// dht.transactionManager.CleanPeriod = time.Minute * 5
 	dht.AddTransaction(transaction)
 	dht.RequestHandler = transaction.OnRequest
-
-	return &Crawler{
-		dht:          dht,
-		resultBuffer: buf,
-	}
-}
-
-// SetAddress set the address which dht will bind
-func (crawler *Crawler) SetAddress(ip string, port int16) {
-	crawler.dht.IP = ip
-	crawler.dht.Port = port
-}
-
-// SetWorkdersTotal set the workers total
-func (crawler *Crawler) SetWorkdersTotal(x int) {
-	crawler.dht.WorkersTotal = x
-}
-
-// Run will launch the crawler
-func (crawler *Crawler) Run() error {
-	return crawler.dht.Run()
-}
-
-// ResultChan returns a Result channel
-func (crawler *Crawler) ResultChan() chan Result {
-	ch := make(chan Result)
-	go func() {
-		for {
-			result, flag := crawler.resultBuffer.Pop()
-			if !flag {
-				close(ch)
-				break
-			}
-			ch <- result.(Result)
-		}
-	}()
-	return ch
+	
+	return &Crawler{dht}
 }
 
 type crawlTransaction struct {
@@ -85,10 +39,12 @@ type crawlTransaction struct {
 	lock         sync.RWMutex
 	target       string
 	filter       *nodeFilter
-	resultBuffer *queue.Queue
+	crawCallback func(infoHash string, peerIP net.IP, peerPort int)
 }
 
-func newCrawlTransaction(id string, buf *queue.Queue) *crawlTransaction {
+func newCrawlTransaction(id string, 
+	callback func(string, net.IP, int)) *crawlTransaction {
+	
 	return &crawlTransaction{
 		id: tools.RandomString(2),
 		LaunchUrls: []string{
@@ -99,7 +55,7 @@ func newCrawlTransaction(id string, buf *queue.Queue) *crawlTransaction {
 
 		target:       tools.RandomString(20),
 		filter:       newNodeFilter(),
-		resultBuffer: buf,
+		crawCallback: callback,
 	}
 }
 
@@ -171,7 +127,9 @@ func (transaction *crawlTransaction) OnRequest(dht *dhtCore,
 	case "announce_peer":
 		infoHash := args["info_hash"].(string)
 		port := args["port"].(int)
-		transaction.resultBuffer.Put(Result{infoHash, nd.addr.IP, port})
+		if transaction.crawCallback != nil {
+			defer transaction.crawCallback(infoHash, nd.addr.IP, port)
+		}
 		dht.SendMsg(nd, makeResponse(transactionID, map[string]interface{}{
 			"id": makeID(nd.id, dht.NodeID),
 		}))

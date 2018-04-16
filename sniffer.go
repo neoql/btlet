@@ -2,10 +2,10 @@ package btlet
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
-	"github.com/neoql/container/queue"
 )
 
 // File contains info of file
@@ -22,64 +22,39 @@ type Meta struct {
 	Files []File
 }
 
+// Pipeline is used for handle meta
+type Pipeline interface {
+	HandleMeta(Meta)
+}
+
 // Sniffer can crawl Meta from dht.
 type Sniffer struct {
-	metaBuffer *queue.Queue
-
 	IP                string
 	Port              int16
-	CrawlWorkersTotal int
-	FetchWorkersTotal int
+	pipeline          Pipeline
 }
 
 // NewSniffer returns a new Sniffer instance.
-func NewSniffer() *Sniffer {
+func NewSniffer(p Pipeline) *Sniffer {
 	return &Sniffer{
-		metaBuffer: queue.New(),
-
 		IP:                "0.0.0.0",
 		Port:              6881,
-		CrawlWorkersTotal: 32,
-		FetchWorkersTotal: 64,
+		pipeline:	       p,
 	}
 }
 
 // Run will launch the sniffer
 func (sniffer *Sniffer) Run() error {
-	crawler := dht.NewCrawler()
-	crawler.SetWorkdersTotal(sniffer.CrawlWorkersTotal)
-	crawler.SetAddress(sniffer.IP, sniffer.Port)
-
-	for i := 0; i < sniffer.FetchWorkersTotal; i++ {
-		go func() {
-			for r := range crawler.ResultChan() {
-				address := fmt.Sprintf("%s:%d", r.PeerIP, r.PeerPort)
-				meta, err := bt.FetchMetadata(r.InfoHash, address)
-				if err != nil {
-					continue
-				}
-				sniffer.metaBuffer.Put(loadMeta(meta, r.InfoHash))
-			}
-		}()
-	}
-
+	crawler := dht.NewCrawler(sniffer.IP, sniffer.Port, sniffer.onCrawInfohash)
 	return crawler.Run()
 }
 
-// MetaChan returns a Meta channel
-func (sniffer *Sniffer) MetaChan() chan Meta {
-	ch := make(chan Meta)
-	go func() {
-		for {
-			meta, flag := sniffer.metaBuffer.Pop()
-			if !flag {
-				close(ch)
-				break
-			}
-			ch <- meta.(Meta)
-		}
-	}()
-	return ch
+func (sniffer *Sniffer) onCrawInfohash(infoHash string, ip net.IP, port int) {
+	address := fmt.Sprintf("%s:%d", ip, port)
+	meta, _ := bt.FetchMetadata(infoHash, address)
+	if sniffer.pipeline != nil {
+		sniffer.pipeline.HandleMeta(loadMeta(meta, infoHash))
+	}
 }
 
 func loadMeta(info map[string]interface{}, hash string) Meta {
@@ -142,4 +117,33 @@ func joinPath(a []interface{}, sep string) string {
 		bp += copy(b[bp:], s.(string))
 	}
 	return string(b)
+}
+
+// SimplePipeline is a simple pipeline
+type SimplePipeline struct {
+	ch chan Meta
+}
+
+// NewSimplePipeline will returns a simple pipline
+func NewSimplePipeline() *SimplePipeline {
+	return &SimplePipeline{
+		ch: make(chan Meta),
+	}
+}
+
+// NewSimplePipelineWithBuf will returns a simple pipline with buffer
+func NewSimplePipelineWithBuf(bufSize int) *SimplePipeline {
+	return &SimplePipeline{
+		ch: make(chan Meta, bufSize),
+	}
+}
+
+// HandleMeta will handle meta
+func (p *SimplePipeline) HandleMeta(meta Meta) {
+	p.ch <- meta
+}
+
+// MetaChan returns a Meta channel
+func (p *SimplePipeline) MetaChan() <-chan Meta {
+	return p.ch
 }
