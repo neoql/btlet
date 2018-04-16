@@ -32,9 +32,9 @@ func statistic(total *int) {
 	for range time.Tick(time.Minute) {
 		sub := *total - last
 		last = *total
-		fmt.Println("=========================================")
+		fmt.Println("=============================================================================")
 		fmt.Printf("Crawled %d meta last minute, total is %d\n", sub, last)
-		fmt.Println("=========================================")
+		fmt.Println("=============================================================================")
 	}
 }
 

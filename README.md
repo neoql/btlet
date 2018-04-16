@@ -34,10 +34,11 @@ import (
 )
 
 func main() {
-    s := btlet.NewSniffer()
+    p := btlet.NewSimplePipeline()
+    s := btlet.NewSniffer(p)
     s.Run()
     
-    for meta := range s.MetaChan() {
+    for meta := range p.MetaChan() {
         println(meta)
     }
 }
