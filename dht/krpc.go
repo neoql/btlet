@@ -51,40 +51,34 @@ func (context *transactionContext) loop(dht *dhtCore, rmself func()) {
 }
 
 type transactionManager struct {
-	lock         sync.RWMutex
 	dht          *dhtCore
-	transactions map[string]*transactionContext
+	transactions *sync.Map
 }
 
 func newTransactionManager(dht *dhtCore) *transactionManager {
 	return &transactionManager{
 		dht:          dht,
-		transactions: make(map[string]*transactionContext),
+		transactions: new(sync.Map),
 	}
 }
 
 func (manager *transactionManager) Add(t Transaction) error {
-	manager.lock.Lock()
-	defer manager.lock.Unlock()
-
-	if _, ok := manager.transactions[t.ID()]; ok {
-		return errors.New("transation id is already exist")
-	}
-
 	context := newTransactionContext(t)
-	manager.transactions[t.ID()] = context
+	_, ok := manager.transactions.LoadOrStore(t.ID(), context)
+
 	if manager.dht.conn != nil {
 		go context.loop(manager.dht, manager.mkRemoveCallback(t))
+	}
+
+	if ok {
+		return errors.New("transation id is already exist")
 	}
 
 	return nil
 }
 
 func (manager *transactionManager) remove(transactionID string) {
-	manager.lock.Lock()
-	defer manager.lock.Unlock()
-
-	delete(manager.transactions, transactionID)
+	manager.transactions.Delete(transactionID)
 }
 
 func (manager *transactionManager) mkRemoveCallback(t Transaction) func() {
@@ -94,21 +88,22 @@ func (manager *transactionManager) mkRemoveCallback(t Transaction) func() {
 }
 
 func (manager *transactionManager) launchAll() {
-	manager.lock.RLock()
-	defer manager.lock.RUnlock()
+	manager.transactions.Range(func(k, v interface{}) bool {
+		manager.letContextAlive(v.(*transactionContext))
+		return true
+	})
+}
 
-	for _, context := range manager.transactions {
-		go context.loop(manager.dht, manager.mkRemoveCallback(context.transaction))
-	}
+func (manager *transactionManager) letContextAlive(ctx *transactionContext) {
+	go ctx.loop(manager.dht, manager.mkRemoveCallback(ctx.transaction))
 }
 
 func (manager *transactionManager) HandleResponse(transactionID string,
 	nd *node, resp map[string]interface{}) {
 
-	manager.lock.RLock()
-	defer manager.lock.RUnlock()
-
-	if context, ok := manager.transactions[transactionID]; ok {
+	v, ok := manager.transactions.Load(transactionID)
+	if ok {
+		context := v.(*transactionContext)
 		context.Fresh()
 		context.transaction.OnResponse(manager.dht, nd, resp)
 	}
