@@ -57,7 +57,7 @@ func (dht *dhtCore) loop() {
 			continue
 		}
 
-		dht.handleMsg(addr, buf[:n])
+		go dht.handleMsg(addr, buf[:n])
 	}
 }
 
