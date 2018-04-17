@@ -36,7 +36,7 @@ import (
 func main() {
     p := btlet.NewSimplePipeline()
     s := btlet.NewSniffer(p)
-    s.Run()
+    go s.Run()
     
     for meta := range p.MetaChan() {
         println(meta)

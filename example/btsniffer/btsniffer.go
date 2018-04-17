@@ -10,7 +10,7 @@ import (
 func main() {
 	p := btlet.NewSimplePipelineWithBuf(512)
 	s := btlet.NewSniffer(p)
-	s.Run()
+	go s.Run()
 
 	total := 0
 	go statistic(&total)

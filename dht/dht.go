@@ -21,16 +21,16 @@ type dhtCore struct {
 		q string, args map[string]interface{})
 	ErrorHandler func(transactionID, string, code int, msg string)
 
-	IP           string
-	Port         int16
-	NodeID       string
+	IP     string
+	Port   int16
+	NodeID string
 }
 
 func newDHTCore() *dhtCore {
 	core := &dhtCore{
-		IP:           "0.0.0.0",
-		Port:         6881,
-		NodeID:       tools.RandomString(20),
+		IP:     "0.0.0.0",
+		Port:   6881,
+		NodeID: tools.RandomString(20),
 	}
 	core.transactionManager = newTransactionManager(core)
 
@@ -42,9 +42,8 @@ func (dht *dhtCore) Run() (err error) {
 		return
 	}
 
-	go dht.loop()
 	dht.launch()
-
+	dht.loop()
 	return
 }
 
