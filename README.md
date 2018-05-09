@@ -30,6 +30,7 @@ $ go get -v github.com/neoql/btlet
 package main
 
 import (
+    "fmt"
     "github.com/neoql/btlet"
 )
 
@@ -39,7 +40,7 @@ func main() {
     go s.Run()
     
     for meta := range p.MetaChan() {
-        println(meta)
+        fmt.Println(meta)
     }
 }
 ```
