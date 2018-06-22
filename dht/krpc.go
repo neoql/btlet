@@ -7,14 +7,21 @@ import (
 	"time"
 )
 
+// Handle used for operate dht.
+type Handle interface {
+	NodeID() string
+	SendMessage(nd *Node, msg map[string]interface{}) error
+}
+
 // Transaction is KRPC transaction.
 type Transaction interface {
 	ID() string
 	ShelfLife() time.Duration
-	OnTimeout(dht *dhtCore) bool
-	OnLaunch(dht *dhtCore)
-	OnResponse(dht *dhtCore, nd *node, resp map[string]interface{})
-	OnFinish(dht *dhtCore)
+
+	OnTimeout(handle Handle) bool
+	OnLaunch(handle Handle)
+	OnResponse(handle Handle, nd *Node, resp map[string]interface{})
+	OnFinish(handle Handle)
 }
 
 type transactionContext struct {
@@ -33,8 +40,8 @@ func (context *transactionContext) Fresh() {
 	context.alive <- struct{}{}
 }
 
-func (context *transactionContext) loop(dht *dhtCore, rmself func()) {
-	context.transaction.OnLaunch(dht)
+func (context *transactionContext) loop(handle Handle, rmself func()) {
+	context.transaction.OnLaunch(handle)
 
 	for {
 		timeout := time.NewTimer(context.transaction.ShelfLife())
@@ -42,8 +49,8 @@ func (context *transactionContext) loop(dht *dhtCore, rmself func()) {
 		case <-context.alive:
 			timeout.Stop()
 		case <-timeout.C:
-			if context.transaction.OnTimeout(dht) {
-				context.transaction.OnFinish(dht)
+			if context.transaction.OnTimeout(handle) {
+				context.transaction.OnFinish(handle)
 				break
 			}
 		}
@@ -51,13 +58,13 @@ func (context *transactionContext) loop(dht *dhtCore, rmself func()) {
 }
 
 type transactionManager struct {
-	dht          *dhtCore
+	handle       Handle
 	transactions *sync.Map
 }
 
-func newTransactionManager(dht *dhtCore) *transactionManager {
+func newTransactionManager(handle Handle) *transactionManager {
 	return &transactionManager{
-		dht:          dht,
+		handle:       handle,
 		transactions: new(sync.Map),
 	}
 }
@@ -66,13 +73,11 @@ func (manager *transactionManager) Add(t Transaction) error {
 	context := newTransactionContext(t)
 	_, ok := manager.transactions.LoadOrStore(t.ID(), context)
 
-	if manager.dht.conn != nil {
-		go context.loop(manager.dht, manager.mkRemoveCallback(t))
-	}
-
 	if ok {
 		return errors.New("transation id is already exist")
 	}
+
+	go context.loop(manager.handle, manager.mkRemoveCallback(t))
 
 	return nil
 }
@@ -95,17 +100,17 @@ func (manager *transactionManager) launchAll() {
 }
 
 func (manager *transactionManager) letContextAlive(ctx *transactionContext) {
-	go ctx.loop(manager.dht, manager.mkRemoveCallback(ctx.transaction))
+	go ctx.loop(manager.handle, manager.mkRemoveCallback(ctx.transaction))
 }
 
 func (manager *transactionManager) HandleResponse(transactionID string,
-	nd *node, resp map[string]interface{}) {
+	nd *Node, resp map[string]interface{}) {
 
 	v, ok := manager.transactions.Load(transactionID)
 	if ok {
 		context := v.(*transactionContext)
 		context.Fresh()
-		context.transaction.OnResponse(manager.dht, nd, resp)
+		context.transaction.OnResponse(manager.handle, nd, resp)
 	}
 	return
 }

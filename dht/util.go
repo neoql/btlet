@@ -1,13 +1,13 @@
 package dht
 
 import (
-	"net"
 	"errors"
+	"net"
 
 	"github.com/neoql/btlet/tools"
 )
 
-func unpackNodes(data string) (nodes []*node, err error) {
+func unpackNodes(data string) (nodes []*Node, err error) {
 	if len(data)%26 != 0 {
 		err = errors.New("the length of data should be an integer multiple of 26")
 		return
@@ -17,7 +17,7 @@ func unpackNodes(data string) (nodes []*node, err error) {
 		buf := data[i*26 : i*26+26]
 		nodeID := buf[:20]
 		ip, port, _ := tools.DecodeCompactIPPortInfo(buf[20:])
-		nodes = append(nodes, &node{id: nodeID, addr: &net.UDPAddr{IP: ip, Port: port}})
+		nodes = append(nodes, &Node{ID: nodeID, Addr: &net.UDPAddr{IP: ip, Port: port}})
 	}
 
 	return

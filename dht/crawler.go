@@ -17,18 +17,18 @@ type Crawler struct {
 }
 
 // NewCrawler returns a new Crawler instance.
-func NewCrawler(ip string, port int16, 
+func NewCrawler(ip string, port int16,
 	callback func(string, net.IP, int)) *Crawler {
 
 	transaction := newCrawlTransaction(tools.RandomString(2), callback)
 	dht := newDHTCore()
-	
-	dht.IP	 = ip
+
+	dht.IP = ip
 	dht.Port = port
 
 	dht.AddTransaction(transaction)
 	dht.RequestHandler = transaction.OnRequest
-	
+
 	return &Crawler{dht}
 }
 
@@ -42,9 +42,9 @@ type crawlTransaction struct {
 	crawCallback func(infoHash string, peerIP net.IP, peerPort int)
 }
 
-func newCrawlTransaction(id string, 
+func newCrawlTransaction(id string,
 	callback func(string, net.IP, int)) *crawlTransaction {
-	
+
 	return &crawlTransaction{
 		id: tools.RandomString(2),
 		LaunchUrls: []string{
@@ -73,24 +73,24 @@ func (transaction *crawlTransaction) Target() string {
 	return transaction.target
 }
 
-func (transaction *crawlTransaction) OnLaunch(dht *dhtCore) {
-	nodes := make([]*node, len(transaction.LaunchUrls))
+func (transaction *crawlTransaction) OnLaunch(handle Handle) {
+	nodes := make([]*Node, len(transaction.LaunchUrls))
 	for i, url := range transaction.LaunchUrls {
 		addr, err := net.ResolveUDPAddr("udp", url)
 		if err != nil {
 			// TODO: handle error
 			continue
 		}
-		nodes[i] = &node{addr, ""}
+		nodes[i] = &Node{addr, ""}
 	}
 
-	transaction.findTargetNode(dht, transaction.Target(), nodes...)
+	transaction.findTargetNode(handle, transaction.Target(), nodes...)
 }
 
-func (transaction *crawlTransaction) OnFinish(dht *dhtCore) {}
+func (transaction *crawlTransaction) OnFinish(handle Handle) {}
 
-func (transaction *crawlTransaction) OnResponse(dht *dhtCore,
-	nd *node, resp map[string]interface{}) {
+func (transaction *crawlTransaction) OnResponse(handle Handle,
+	nd *Node, resp map[string]interface{}) {
 
 	transaction.filter.AddNode(nd)
 
@@ -103,24 +103,24 @@ func (transaction *crawlTransaction) OnResponse(dht *dhtCore,
 		target := transaction.Target()
 		for _, nd := range nodes {
 			if transaction.filter.Check(nd) {
-				transaction.findTargetNode(dht, target, nd)
+				transaction.findTargetNode(handle, target, nd)
 			}
 		}
 	}
 }
 
-func (transaction *crawlTransaction) OnRequest(dht *dhtCore,
-	nd *node, transactionID string, q string, args map[string]interface{}) {
+func (transaction *crawlTransaction) OnRequest(handle Handle,
+	nd *Node, transactionID string, q string, args map[string]interface{}) {
 
 	switch q {
 	case "ping":
-		dht.SendMsg(nd, makeResponse(transactionID, map[string]interface{}{
-			"id": makeID(nd.id, dht.NodeID),
+		handle.SendMessage(nd, makeResponse(transactionID, map[string]interface{}{
+			"id": makeID(nd.ID, handle.NodeID()),
 		}))
 	case "find_node":
 	case "get_peers":
-		dht.SendMsg(nd, makeResponse(transactionID, map[string]interface{}{
-			"id":    makeID(nd.id, dht.NodeID),
+		handle.SendMessage(nd, makeResponse(transactionID, map[string]interface{}{
+			"id":    makeID(nd.ID, handle.NodeID()),
 			"token": tools.RandomString(20),
 			"nodes": "",
 		}))
@@ -128,21 +128,21 @@ func (transaction *crawlTransaction) OnRequest(dht *dhtCore,
 		infoHash := args["info_hash"].(string)
 		port := args["port"].(int)
 		if transaction.crawCallback != nil {
-			defer transaction.crawCallback(infoHash, nd.addr.IP, port)
+			defer transaction.crawCallback(infoHash, nd.Addr.IP, port)
 		}
-		dht.SendMsg(nd, makeResponse(transactionID, map[string]interface{}{
-			"id": makeID(nd.id, dht.NodeID),
+		handle.SendMessage(nd, makeResponse(transactionID, map[string]interface{}{
+			"id": makeID(nd.ID, handle.NodeID()),
 		}))
 	default:
 	}
 
 	if transaction.filter.Check(nd) {
-		transaction.findTargetNode(dht, transaction.Target(), nd)
+		transaction.findTargetNode(handle, transaction.Target(), nd)
 	}
 }
 
-func (transaction *crawlTransaction) OnTimeout(dht *dhtCore) bool {
-	defer transaction.OnLaunch(dht)
+func (transaction *crawlTransaction) OnTimeout(handle Handle) bool {
+	defer transaction.OnLaunch(handle)
 
 	transaction.lock.Lock()
 	defer transaction.lock.Unlock()
@@ -154,18 +154,18 @@ func (transaction *crawlTransaction) OnTimeout(dht *dhtCore) bool {
 	return false
 }
 
-func (transaction *crawlTransaction) findTargetNode(dht *dhtCore, target string, nodes ...*node) {
+func (transaction *crawlTransaction) findTargetNode(handle Handle, target string, nodes ...*Node) {
 	for _, nd := range nodes {
 		msg, err := makeQuery("find_node", transaction.id, map[string]interface{}{
 			"target": target,
-			"id":     makeID(nd.id, dht.NodeID),
+			"id":     makeID(nd.ID, handle.NodeID()),
 		})
 		if err != nil {
 			// TODO: handle error
 			continue
 		}
 
-		dht.SendMsg(nd, msg)
+		handle.SendMessage(nd, msg)
 	}
 }
 
@@ -183,23 +183,23 @@ type nodeFilter struct {
 
 func newNodeFilter() *nodeFilter {
 	return &nodeFilter{
-		core: bloom.NewWithEstimates(8*1024, 0.001),
+		core: bloom.NewWithEstimates(8*1024*1024, 0.001),
 	}
 }
 
-func (filter *nodeFilter) AddNode(nd *node) {
+func (filter *nodeFilter) AddNode(nd *Node) {
 	filter.lock.Lock()
 	filter.lock.Unlock()
 
-	key := fmt.Sprintf("%s:%d", nd.addr.IP, nd.addr.Port)
+	key := fmt.Sprintf("%s:%d", nd.Addr.IP, nd.Addr.Port)
 	filter.core.AddString(key)
 }
 
-func (filter *nodeFilter) Check(nd *node) bool {
+func (filter *nodeFilter) Check(nd *Node) bool {
 	filter.lock.RLock()
 	defer filter.lock.RUnlock()
 
-	key := fmt.Sprintf("%s:%d", nd.addr.IP, nd.addr.Port)
+	key := fmt.Sprintf("%s:%d", nd.Addr.IP, nd.Addr.Port)
 	return !filter.core.TestString(key)
 }
 

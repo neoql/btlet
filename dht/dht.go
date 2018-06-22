@@ -9,15 +9,29 @@ import (
 	"github.com/neoql/btlet/tools"
 )
 
-type node struct {
-	addr *net.UDPAddr
-	id   string
+// Node is dht node.
+type Node struct {
+	Addr *net.UDPAddr
+	ID   string
+}
+
+type handle struct {
+	core   *dhtCore
+	nodeID string
+}
+
+func (h *handle) SendMessage(nd *Node, msg map[string]interface{}) error {
+	return h.core.SendMessage(nd, msg)
+}
+
+func (h *handle) NodeID() string {
+	return h.nodeID
 }
 
 type dhtCore struct {
 	conn               *net.UDPConn
 	transactionManager *transactionManager
-	RequestHandler     func(dht *dhtCore, nd *node, transactionID string,
+	RequestHandler     func(handle Handle, nd *Node, transactionID string,
 		q string, args map[string]interface{})
 	ErrorHandler func(transactionID, string, code int, msg string)
 
@@ -32,7 +46,7 @@ func newDHTCore() *dhtCore {
 		Port:   6881,
 		NodeID: tools.RandomString(20),
 	}
-	core.transactionManager = newTransactionManager(core)
+	core.transactionManager = newTransactionManager(&handle{core, core.NodeID})
 
 	return core
 }
@@ -64,18 +78,20 @@ func (dht *dhtCore) AddTransaction(t Transaction) error {
 	return dht.transactionManager.Add(t)
 }
 
-func (dht *dhtCore) SendMsg(nd *node, msg map[string]interface{}) {
+func (dht *dhtCore) SendMessage(nd *Node, msg map[string]interface{}) error {
 	data, err := bencode.Encode(msg)
 	if err != nil {
 		// TODO: handle error
-		return
+		return err
 	}
 	dht.conn.SetWriteDeadline(time.Now().Add(time.Second * 15))
-	_, err = dht.conn.WriteToUDP(data, nd.addr)
+	_, err = dht.conn.WriteToUDP(data, nd.Addr)
 	if err != nil {
 		// TODO: handle error
-		return
+		return err
 	}
+
+	return nil
 }
 
 func (dht *dhtCore) prepare() (err error) {
@@ -115,12 +131,12 @@ func (dht *dhtCore) handleMsg(addr *net.UDPAddr, data []byte) {
 		q := msg["q"].(string)
 		args := msg["a"].(map[string]interface{})
 		nodeID := args["id"].(string)
-		dht.RequestHandler(dht, &node{addr, nodeID}, transactionID, q, args)
+		dht.RequestHandler(&handle{dht, dht.NodeID}, &Node{addr, nodeID}, transactionID, q, args)
 	case "r":
 		transactionID := msg["t"].(string)
 		resp := msg["r"].(map[string]interface{})
 		nodeID := resp["id"].(string)
-		dht.transactionManager.HandleResponse(transactionID, &node{addr, nodeID}, resp)
+		dht.transactionManager.HandleResponse(transactionID, &Node{addr, nodeID}, resp)
 	case "e":
 	default:
 		// TODO: unknown "y"
