@@ -21,96 +21,108 @@ type Transaction interface {
 	OnTimeout(handle Handle) bool
 	OnLaunch(handle Handle)
 	OnResponse(handle Handle, nd *Node, resp map[string]interface{})
-	OnFinish(handle Handle)
 }
 
-type transactionContext struct {
+type transactionBox struct {
 	transaction Transaction
 	alive       chan struct{}
+	end         chan struct{}
 }
 
-func newTransactionContext(t Transaction) *transactionContext {
-	return &transactionContext{
+func newTransactionBox(t Transaction) *transactionBox {
+	return &transactionBox{
 		transaction: t,
 		alive:       make(chan struct{}),
+		end:         make(chan struct{}),
 	}
 }
 
-func (context *transactionContext) Fresh() {
-	context.alive <- struct{}{}
+func (box *transactionBox) keepAlive() {
+	select {
+	case box.alive <- struct{}{}:
+	default:
+	}
 }
 
-func (context *transactionContext) loop(handle Handle, rmself func()) {
-	context.transaction.OnLaunch(handle)
+func (box *transactionBox) done() {
+	box.end <- struct{}{}
+}
 
+func (box *transactionBox) loop(handle Handle, rmself func()) {
+	box.transaction.OnLaunch(handle)
+
+LOOP:
 	for {
-		timeout := time.NewTimer(context.transaction.ShelfLife())
+		timeout := time.NewTimer(box.transaction.ShelfLife())
 		select {
-		case <-context.alive:
+		case <-box.alive:
 			timeout.Stop()
 		case <-timeout.C:
-			if context.transaction.OnTimeout(handle) {
-				context.transaction.OnFinish(handle)
-				break
+			if box.transaction.OnTimeout(handle) {
+				rmself()
+				break LOOP
 			}
+		case <-box.end:
+			rmself()
+			break LOOP
 		}
 	}
 }
 
-type transactionManager struct {
+// TransactionDispatcher can dispatch transactions
+type TransactionDispatcher struct {
 	handle       Handle
 	transactions *sync.Map
 }
 
-func newTransactionManager(handle Handle) *transactionManager {
-	return &transactionManager{
+func newTransactionDispatcher(handle Handle) *TransactionDispatcher {
+	return &TransactionDispatcher{
 		handle:       handle,
 		transactions: new(sync.Map),
 	}
 }
 
-func (manager *transactionManager) Add(t Transaction) error {
-	context := newTransactionContext(t)
-	_, ok := manager.transactions.LoadOrStore(t.ID(), context)
+// Add the transaction into dispathcher and launch it
+func (dispatcher *TransactionDispatcher) Add(t Transaction) error {
+	box := newTransactionBox(t)
+	_, ok := dispatcher.transactions.LoadOrStore(t.ID(), box)
 
 	if ok {
 		return errors.New("transation id is already exist")
 	}
 
-	go context.loop(manager.handle, manager.mkRemoveCallback(t))
+	go box.loop(dispatcher.handle, dispatcher.mkRemoveCallback(t))
 
 	return nil
 }
 
-func (manager *transactionManager) remove(transactionID string) {
-	manager.transactions.Delete(transactionID)
+func (dispatcher *TransactionDispatcher) remove(transactionID string) {
+	dispatcher.transactions.Delete(transactionID)
 }
 
-func (manager *transactionManager) mkRemoveCallback(t Transaction) func() {
-	return func() {
-		manager.remove(t.ID())
+// Remove the transaction from the dispatcher.
+func (dispatcher *TransactionDispatcher) Remove(transactionID string) {
+	box, ok := dispatcher.transactions.Load(transactionID)
+	if ok {
+		box.(*transactionBox).done()
 	}
 }
 
-func (manager *transactionManager) launchAll() {
-	manager.transactions.Range(func(k, v interface{}) bool {
-		manager.letContextAlive(v.(*transactionContext))
-		return true
-	})
+func (dispatcher *TransactionDispatcher) mkRemoveCallback(t Transaction) func() {
+	return func() {
+		dispatcher.remove(t.ID())
+	}
 }
 
-func (manager *transactionManager) letContextAlive(ctx *transactionContext) {
-	go ctx.loop(manager.handle, manager.mkRemoveCallback(ctx.transaction))
-}
-
-func (manager *transactionManager) HandleResponse(transactionID string,
+// DisposeResponse dispose response.
+func (dispatcher *TransactionDispatcher) DisposeResponse(transactionID string,
 	nd *Node, resp map[string]interface{}) {
 
-	v, ok := manager.transactions.Load(transactionID)
+	v, ok := dispatcher.transactions.Load(transactionID)
 	if ok {
-		context := v.(*transactionContext)
-		context.Fresh()
-		context.transaction.OnResponse(manager.handle, nd, resp)
+		context := v.(*transactionBox)
+		context.keepAlive()
+		context.transaction.OnResponse(dispatcher.handle, nd, resp)
 	}
 	return
 }

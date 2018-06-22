@@ -29,11 +29,12 @@ func (h *handle) NodeID() string {
 }
 
 type dhtCore struct {
-	conn               *net.UDPConn
-	transactionManager *transactionManager
-	RequestHandler     func(handle Handle, nd *Node, transactionID string,
+	conn                  *net.UDPConn
+	transactionDispatcher *TransactionDispatcher
+	RequestHandler        func(handle Handle, nd *Node, transactionID string,
 		q string, args map[string]interface{})
 	ErrorHandler func(transactionID, string, code int, msg string)
+	transactions []Transaction
 
 	IP     string
 	Port   int16
@@ -46,7 +47,7 @@ func newDHTCore() *dhtCore {
 		Port:   6881,
 		NodeID: tools.RandomString(20),
 	}
-	core.transactionManager = newTransactionManager(&handle{core, core.NodeID})
+	core.transactionDispatcher = newTransactionDispatcher(&handle{core, core.NodeID})
 
 	return core
 }
@@ -75,7 +76,8 @@ func (dht *dhtCore) loop() {
 }
 
 func (dht *dhtCore) AddTransaction(t Transaction) error {
-	return dht.transactionManager.Add(t)
+	dht.transactions = append(dht.transactions, t)
+	return nil
 }
 
 func (dht *dhtCore) SendMessage(nd *Node, msg map[string]interface{}) error {
@@ -107,7 +109,9 @@ func (dht *dhtCore) prepare() (err error) {
 }
 
 func (dht *dhtCore) launch() {
-	dht.transactionManager.launchAll()
+	for _, t := range dht.transactions {
+		dht.transactionDispatcher.Add(t)
+	}
 }
 
 func (dht *dhtCore) handleMsg(addr *net.UDPAddr, data []byte) {
@@ -136,7 +140,7 @@ func (dht *dhtCore) handleMsg(addr *net.UDPAddr, data []byte) {
 		transactionID := msg["t"].(string)
 		resp := msg["r"].(map[string]interface{})
 		nodeID := resp["id"].(string)
-		dht.transactionManager.HandleResponse(transactionID, &Node{addr, nodeID}, resp)
+		dht.transactionDispatcher.DisposeResponse(transactionID, &Node{addr, nodeID}, resp)
 	case "e":
 	default:
 		// TODO: unknown "y"
