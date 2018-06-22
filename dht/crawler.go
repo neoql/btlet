@@ -38,14 +38,52 @@ func NewSybilCrawler(ip string, port int) *SybilCrawler {
 
 // Crawl ovrride Crawler.Crawl
 func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) error {
-	core := newDHTCore()
-	core.IP = crawler.ip
-	core.Port = int16(crawler.port)
+	core, err := NewCore(crawler.ip, crawler.port)
+	if err != nil {
+		return err
+	}
 
+	handle := core.Handle(crawler.nodeID)
+	dispatcher := NewTransactionDispatcher(handle)
 	transaction := newSybilTransaction(tools.RandomString(2), callback)
-	core.AddTransaction(transaction)
-	core.RequestHandler = transaction.OnRequest
-	return core.Run()
+
+	err = dispatcher.Add(transaction)
+	if err != nil {
+		return err
+	}
+	defer dispatcher.Remove(transaction.ID())
+
+	disposer := &sybilMessageDisposer{
+		handle:      handle,
+		dispatcher:  dispatcher,
+		transaction: transaction,
+	}
+
+	return core.Serv(ctx, disposer)
+}
+
+type sybilMessageDisposer struct {
+	handle      Handle
+	dispatcher  *TransactionDispatcher
+	transaction *sybilTransaction
+}
+
+func (disposer *sybilMessageDisposer) DisposeQuery(nd *Node, transactionID string, q string, args map[string]interface{}) error {
+	disposer.transaction.OnQuery(disposer.handle, nd, transactionID, q, args)
+	return nil
+}
+
+func (disposer *sybilMessageDisposer) DisposeResponse(nd *Node, transactionID string, resp map[string]interface{}) error {
+	disposer.dispatcher.DisposeResponse(transactionID, nd, resp)
+	return nil
+}
+
+func (disposer *sybilMessageDisposer) DisposeError(transactionID string, code int, describe string) error {
+	return nil
+}
+
+func (disposer *sybilMessageDisposer) DisposeUnknownMessage(y string, message map[string]interface{}) error {
+	return nil
 }
 
 type sybilTransaction struct {
@@ -101,7 +139,7 @@ func (transaction *sybilTransaction) OnLaunch(handle Handle) {
 	transaction.findTargetNode(handle, transaction.Target(), nodes...)
 }
 
-func (transaction *sybilTransaction) OnFinish(handle Handle) {}
+func (transaction *sybilTransaction) OnError(code int, describe string) {}
 
 func (transaction *sybilTransaction) OnResponse(handle Handle,
 	nd *Node, resp map[string]interface{}) {
@@ -123,7 +161,7 @@ func (transaction *sybilTransaction) OnResponse(handle Handle,
 	}
 }
 
-func (transaction *sybilTransaction) OnRequest(handle Handle,
+func (transaction *sybilTransaction) OnQuery(handle Handle,
 	nd *Node, transactionID string, q string, args map[string]interface{}) {
 
 	switch q {

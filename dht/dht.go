@@ -1,12 +1,12 @@
 package dht
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"time"
 
 	"github.com/neoql/btlet/bencode"
-	"github.com/neoql/btlet/tools"
 )
 
 // Node is dht node.
@@ -15,79 +15,74 @@ type Node struct {
 	ID   string
 }
 
-type handle struct {
-	core   *dhtCore
-	nodeID string
+// MessageDisposer is used for dispose message.
+type MessageDisposer interface {
+	DisposeQuery(nd *Node, transactionID string, q string, args map[string]interface{}) error
+	DisposeResponse(nd *Node, transactionID string, resp map[string]interface{}) error
+	DisposeError(transactionID string, code int, describe string) error
+	DisposeUnknownMessage(y string, message map[string]interface{}) error
 }
 
-func (h *handle) SendMessage(nd *Node, msg map[string]interface{}) error {
-	return h.core.SendMessage(nd, msg)
+// Core is the core of dht.
+type Core struct {
+	conn *net.UDPConn
 }
 
-func (h *handle) NodeID() string {
-	return h.nodeID
-}
-
-type dhtCore struct {
-	conn                  *net.UDPConn
-	transactionDispatcher *TransactionDispatcher
-	RequestHandler        func(handle Handle, nd *Node, transactionID string,
-		q string, args map[string]interface{})
-	ErrorHandler func(transactionID, string, code int, msg string)
-	transactions []Transaction
-
-	IP     string
-	Port   int16
-	NodeID string
-}
-
-func newDHTCore() *dhtCore {
-	core := &dhtCore{
-		IP:     "0.0.0.0",
-		Port:   6881,
-		NodeID: tools.RandomString(20),
-	}
-	core.transactionDispatcher = newTransactionDispatcher(&handle{core, core.NodeID})
-
-	return core
-}
-
-func (dht *dhtCore) Run() (err error) {
-	if err = dht.prepare(); err != nil {
-		return
+// NewCore returns a new Core instance.
+func NewCore(ip string, port int) (*Core, error) {
+	addr, err := net.ResolveUDPAddr("udp", ip+":"+strconv.Itoa(port))
+	if err != nil {
+		return nil, err
 	}
 
-	dht.launch()
-	dht.loop()
-	return
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Core{
+		conn: conn,
+	}, nil
 }
 
-func (dht *dhtCore) loop() {
+// Addr returns the Addr of self.
+func (core *Core) Addr() net.Addr {
+	return core.conn.LocalAddr()
+}
+
+// Serv starts serving.
+func (core *Core) Serv(ctx context.Context, disposer MessageDisposer) (err error) {
+	defer core.conn.Close()
+
+LOOP:
 	for {
+		select {
+		case <-ctx.Done():
+			break LOOP
+		default:
+		}
+
 		buf := make([]byte, 8196)
-		n, addr, err := dht.conn.ReadFromUDP(buf)
+		n, addr, err := core.conn.ReadFromUDP(buf)
 		if err != nil {
 			// TODO: handle error
 			continue
 		}
 
-		go dht.handleMsg(addr, buf[:n])
+		go core.disposeMessage(disposer, addr, buf[:n])
 	}
-}
-
-func (dht *dhtCore) AddTransaction(t Transaction) error {
-	dht.transactions = append(dht.transactions, t)
 	return nil
 }
 
-func (dht *dhtCore) SendMessage(nd *Node, msg map[string]interface{}) error {
+// SendMessage will send message to the node.
+func (core *Core) SendMessage(nd *Node, msg map[string]interface{}) error {
 	data, err := bencode.Encode(msg)
 	if err != nil {
 		// TODO: handle error
 		return err
 	}
-	dht.conn.SetWriteDeadline(time.Now().Add(time.Second * 15))
-	_, err = dht.conn.WriteToUDP(data, nd.Addr)
+	core.conn.SetWriteDeadline(time.Now().Add(time.Second * 15))
+	_, err = core.conn.WriteToUDP(data, nd.Addr)
 	if err != nil {
 		// TODO: handle error
 		return err
@@ -96,35 +91,19 @@ func (dht *dhtCore) SendMessage(nd *Node, msg map[string]interface{}) error {
 	return nil
 }
 
-func (dht *dhtCore) prepare() (err error) {
-	addr, err := net.ResolveUDPAddr("udp", dht.IP+":"+strconv.Itoa(int(dht.Port)))
-	if err != nil {
-		return
-	}
-	dht.conn, err = net.ListenUDP("udp", addr)
-	if err != nil {
-		return
-	}
-	return
-}
-
-func (dht *dhtCore) launch() {
-	for _, t := range dht.transactions {
-		dht.transactionDispatcher.Add(t)
-	}
-}
-
-func (dht *dhtCore) handleMsg(addr *net.UDPAddr, data []byte) {
+func (core *Core) disposeMessage(disposer MessageDisposer, addr *net.UDPAddr, data []byte) (err error) {
 	defer func() {
-		if err := recover(); err != nil {
+		if e := recover(); e != nil {
 			// TODO: handle error
+			err = e.(error)
+			return
 		}
 	}()
 
 	tmp, err := bencode.Decode(data)
 	if err != nil {
 		// TODO: handle error
-		return
+		return err
 	}
 
 	msg := tmp.(map[string]interface{})
@@ -135,14 +114,38 @@ func (dht *dhtCore) handleMsg(addr *net.UDPAddr, data []byte) {
 		q := msg["q"].(string)
 		args := msg["a"].(map[string]interface{})
 		nodeID := args["id"].(string)
-		dht.RequestHandler(&handle{dht, dht.NodeID}, &Node{addr, nodeID}, transactionID, q, args)
+		return disposer.DisposeQuery(&Node{addr, nodeID}, transactionID, q, args)
 	case "r":
 		transactionID := msg["t"].(string)
 		resp := msg["r"].(map[string]interface{})
 		nodeID := resp["id"].(string)
-		dht.transactionDispatcher.DisposeResponse(transactionID, &Node{addr, nodeID}, resp)
+		return disposer.DisposeResponse(&Node{addr, nodeID}, transactionID, resp)
 	case "e":
+		transactionID := msg["t"].(string)
+		e := msg["e"].([]interface{})
+		return disposer.DisposeError(transactionID, e[0].(int), e[1].(string))
 	default:
-		// TODO: unknown "y"
+		return disposer.DisposeUnknownMessage(msg["y"].(string), msg)
 	}
+}
+
+// Handle returns a handle
+func (core *Core) Handle(nodeID string) Handle {
+	return &handle{
+		core:   core,
+		nodeID: nodeID,
+	}
+}
+
+type handle struct {
+	core   *Core
+	nodeID string
+}
+
+func (h *handle) SendMessage(nd *Node, msg map[string]interface{}) error {
+	return h.core.SendMessage(nd, msg)
+}
+
+func (h *handle) NodeID() string {
+	return h.nodeID
 }

@@ -21,6 +21,7 @@ type Transaction interface {
 	OnTimeout(handle Handle) bool
 	OnLaunch(handle Handle)
 	OnResponse(handle Handle, nd *Node, resp map[string]interface{})
+	OnError(code int, describe string)
 }
 
 type transactionBox struct {
@@ -75,7 +76,8 @@ type TransactionDispatcher struct {
 	transactions *sync.Map
 }
 
-func newTransactionDispatcher(handle Handle) *TransactionDispatcher {
+// NewTransactionDispatcher creates a new TransactionDispatcher
+func NewTransactionDispatcher(handle Handle) *TransactionDispatcher {
 	return &TransactionDispatcher{
 		handle:       handle,
 		transactions: new(sync.Map),
