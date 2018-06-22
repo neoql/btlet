@@ -1,6 +1,7 @@
 package dht
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -11,41 +12,54 @@ import (
 	"github.com/willf/bloom"
 )
 
-// Crawler can crawl info hash from DHT.
-type Crawler struct {
-	*dhtCore
+// CrawCallback will call when Crawler craw a infohash
+type CrawCallback func(infoHash string, peerIP net.IP, peerPort int)
+
+// Crawler can crawl infohash from dht.
+type Crawler interface {
+	Crawl(ctx context.Context, callback CrawCallback) error
 }
 
-// NewCrawler returns a new Crawler instance.
-func NewCrawler(ip string, port int16,
-	callback func(string, net.IP, int)) *Crawler {
-
-	transaction := newCrawlTransaction(tools.RandomString(2), callback)
-	dht := newDHTCore()
-
-	dht.IP = ip
-	dht.Port = port
-
-	dht.AddTransaction(transaction)
-	dht.RequestHandler = transaction.OnRequest
-
-	return &Crawler{dht}
+// SybilCrawler can crawl info hash from DHT.
+type SybilCrawler struct {
+	ip     string
+	port   int
+	nodeID string
 }
 
-type crawlTransaction struct {
+// NewSybilCrawler returns a new Crawler instance.
+func NewSybilCrawler(ip string, port int) *SybilCrawler {
+	return &SybilCrawler{
+		ip:     ip,
+		port:   port,
+		nodeID: tools.RandomString(20),
+	}
+}
+
+// Crawl ovrride Crawler.Crawl
+func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) error {
+	core := newDHTCore()
+	core.IP = crawler.ip
+	core.Port = int16(crawler.port)
+
+	transaction := newSybilTransaction(tools.RandomString(2), callback)
+	core.AddTransaction(transaction)
+	core.RequestHandler = transaction.OnRequest
+	return core.Run()
+}
+
+type sybilTransaction struct {
 	id         string
 	LaunchUrls []string
 
 	lock         sync.RWMutex
 	target       string
 	filter       *nodeFilter
-	crawCallback func(infoHash string, peerIP net.IP, peerPort int)
+	crawCallback CrawCallback
 }
 
-func newCrawlTransaction(id string,
-	callback func(string, net.IP, int)) *crawlTransaction {
-
-	return &crawlTransaction{
+func newSybilTransaction(id string, callback CrawCallback) *sybilTransaction {
+	return &sybilTransaction{
 		id: tools.RandomString(2),
 		LaunchUrls: []string{
 			"router.bittorrent.com:6881",
@@ -59,21 +73,21 @@ func newCrawlTransaction(id string,
 	}
 }
 
-func (transaction *crawlTransaction) ID() string {
+func (transaction *sybilTransaction) ID() string {
 	return transaction.id
 }
 
-func (transaction *crawlTransaction) ShelfLife() time.Duration {
+func (transaction *sybilTransaction) ShelfLife() time.Duration {
 	return time.Second * 30
 }
 
-func (transaction *crawlTransaction) Target() string {
+func (transaction *sybilTransaction) Target() string {
 	transaction.lock.RLock()
 	defer transaction.lock.RUnlock()
 	return transaction.target
 }
 
-func (transaction *crawlTransaction) OnLaunch(handle Handle) {
+func (transaction *sybilTransaction) OnLaunch(handle Handle) {
 	nodes := make([]*Node, len(transaction.LaunchUrls))
 	for i, url := range transaction.LaunchUrls {
 		addr, err := net.ResolveUDPAddr("udp", url)
@@ -87,9 +101,9 @@ func (transaction *crawlTransaction) OnLaunch(handle Handle) {
 	transaction.findTargetNode(handle, transaction.Target(), nodes...)
 }
 
-func (transaction *crawlTransaction) OnFinish(handle Handle) {}
+func (transaction *sybilTransaction) OnFinish(handle Handle) {}
 
-func (transaction *crawlTransaction) OnResponse(handle Handle,
+func (transaction *sybilTransaction) OnResponse(handle Handle,
 	nd *Node, resp map[string]interface{}) {
 
 	transaction.filter.AddNode(nd)
@@ -109,7 +123,7 @@ func (transaction *crawlTransaction) OnResponse(handle Handle,
 	}
 }
 
-func (transaction *crawlTransaction) OnRequest(handle Handle,
+func (transaction *sybilTransaction) OnRequest(handle Handle,
 	nd *Node, transactionID string, q string, args map[string]interface{}) {
 
 	switch q {
@@ -141,7 +155,7 @@ func (transaction *crawlTransaction) OnRequest(handle Handle,
 	}
 }
 
-func (transaction *crawlTransaction) OnTimeout(handle Handle) bool {
+func (transaction *sybilTransaction) OnTimeout(handle Handle) bool {
 	defer transaction.OnLaunch(handle)
 
 	transaction.lock.Lock()
@@ -154,7 +168,7 @@ func (transaction *crawlTransaction) OnTimeout(handle Handle) bool {
 	return false
 }
 
-func (transaction *crawlTransaction) findTargetNode(handle Handle, target string, nodes ...*Node) {
+func (transaction *sybilTransaction) findTargetNode(handle Handle, target string, nodes ...*Node) {
 	for _, nd := range nodes {
 		msg, err := makeQuery("find_node", transaction.id, map[string]interface{}{
 			"target": target,

@@ -3,6 +3,7 @@ package btlet
 import (
 	"fmt"
 	"net"
+	"context"
 
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
@@ -29,24 +30,24 @@ type Pipeline interface {
 
 // Sniffer can crawl Meta from dht.
 type Sniffer struct {
-	IP                string
-	Port              int16
-	pipeline          Pipeline
+	IP       string
+	Port     int16
+	pipeline Pipeline
 }
 
 // NewSniffer returns a new Sniffer instance.
 func NewSniffer(p Pipeline) *Sniffer {
 	return &Sniffer{
-		IP:                "0.0.0.0",
-		Port:              6881,
-		pipeline:	       p,
+		IP:       "0.0.0.0",
+		Port:     6881,
+		pipeline: p,
 	}
 }
 
 // Run will launch the sniffer
 func (sniffer *Sniffer) Run() error {
-	crawler := dht.NewCrawler(sniffer.IP, sniffer.Port, sniffer.onCrawInfohash)
-	return crawler.Run()
+	crawler := dht.NewSybilCrawler(sniffer.IP, int(sniffer.Port))
+	return crawler.Crawl(context.TODO(), sniffer.onCrawInfohash)
 }
 
 func (sniffer *Sniffer) onCrawInfohash(infoHash string, ip net.IP, port int) {
