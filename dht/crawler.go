@@ -87,9 +87,7 @@ func (disposer *sybilMessageDisposer) DisposeUnknownMessage(y string, message ma
 }
 
 type sybilTransaction struct {
-	id         string
-	LaunchUrls []string
-
+	id           string
 	lock         sync.RWMutex
 	target       string
 	filter       *nodeFilter
@@ -99,12 +97,6 @@ type sybilTransaction struct {
 func newSybilTransaction(id string, callback CrawCallback) *sybilTransaction {
 	return &sybilTransaction{
 		id: tools.RandomString(2),
-		LaunchUrls: []string{
-			"router.bittorrent.com:6881",
-			"router.utorrent.com:6881",
-			"dht.transmissionbt.com:6881",
-		},
-
 		target:       tools.RandomString(20),
 		filter:       newNodeFilter(),
 		crawCallback: callback,
@@ -126,8 +118,8 @@ func (transaction *sybilTransaction) Target() string {
 }
 
 func (transaction *sybilTransaction) OnLaunch(handle Handle) {
-	nodes := make([]*Node, len(transaction.LaunchUrls))
-	for i, url := range transaction.LaunchUrls {
+	nodes := make([]*Node, len(defaultBootstrap))
+	for i, url := range defaultBootstrap {
 		addr, err := net.ResolveUDPAddr("udp", url)
 		if err != nil {
 			// TODO: handle error

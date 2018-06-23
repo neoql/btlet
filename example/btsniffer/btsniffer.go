@@ -3,14 +3,16 @@ package main
 import (
 	"fmt"
 	"time"
+	"context"
 
 	"github.com/neoql/btlet"
 )
 
 func main() {
+	builder := btlet.NewSnifferBuilder()
 	p := btlet.NewSimplePipelineWithBuf(512)
-	s := btlet.NewSniffer(p)
-	go s.Run()
+	s := builder.NewSniffer(p)
+	go s.Sniff(context.TODO())
 
 	total := 0
 	go statistic(&total)

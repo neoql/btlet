@@ -9,6 +9,12 @@ import (
 	"github.com/neoql/btlet/bencode"
 )
 
+var defaultBootstrap = []string{
+	"router.bittorrent.com:6881",
+	"router.utorrent.com:6881",
+	"dht.transmissionbt.com:6881",
+}
+
 // Node is dht node.
 type Node struct {
 	Addr *net.UDPAddr

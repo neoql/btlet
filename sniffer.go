@@ -1,69 +1,104 @@
 package btlet
 
 import (
+	"context"
 	"fmt"
 	"net"
-	"context"
+	"errors"
 
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
 )
-
-// File contains info of file
-type File struct {
-	Path string
-	Size int
-}
 
 // Meta is metadata of the torrent
 type Meta struct {
 	Hash  string
 	Name  string
 	Size  int
-	Files []File
+	Files []struct {
+		Path string
+		Size int
+	}
 }
 
 // Pipeline is used for handle meta
 type Pipeline interface {
-	HandleMeta(Meta)
+	DisposeMeta(Meta)
 }
 
-// Sniffer can crawl Meta from dht.
-type Sniffer struct {
-	IP       string
-	Port     int16
-	pipeline Pipeline
+// SniffMode is the mode to sniff infohash
+type SniffMode int
+
+const (
+	// SybilMode is sybil mode
+	SybilMode = SniffMode(iota)
+)
+
+// SnifferBuilder can build Sniffer
+type SnifferBuilder struct {
+	IP   string
+	Port int
+	Mode SniffMode
 }
 
-// NewSniffer returns a new Sniffer instance.
-func NewSniffer(p Pipeline) *Sniffer {
+// NewSnifferBuilder returns a new SnifferBuilder with default config
+func NewSnifferBuilder() *SnifferBuilder {
+	return &SnifferBuilder{
+		IP:   "0.0.0.0",
+		Port: 6881,
+		Mode: SybilMode,
+	}
+}
+
+// NewSniffer returns a Sniffer with the builder's config
+func (builder *SnifferBuilder) NewSniffer(p Pipeline) *Sniffer {
 	return &Sniffer{
-		IP:       "0.0.0.0",
-		Port:     6881,
+		ip:       builder.IP,
+		port:     builder.Port,
+		mode:     builder.Mode,
 		pipeline: p,
 	}
 }
 
-// Run will launch the sniffer
-func (sniffer *Sniffer) Run() error {
-	crawler := dht.NewSybilCrawler(sniffer.IP, int(sniffer.Port))
-	return crawler.Crawl(context.TODO(), sniffer.onCrawInfohash)
+// Sniffer can crawl Meta from dht.
+type Sniffer struct {
+	ip   string
+	port int
+	mode SniffMode
+
+	pipeline Pipeline
 }
 
-func (sniffer *Sniffer) onCrawInfohash(infoHash string, ip net.IP, port int) {
-	address := fmt.Sprintf("%s:%d", ip, port)
-	meta, _ := bt.FetchMetadata(infoHash, address)
-	if sniffer.pipeline != nil {
-		sniffer.pipeline.HandleMeta(loadMeta(meta, infoHash))
+// Sniff starts sniff meta
+func (sniffer *Sniffer) Sniff(ctx context.Context) error {
+	var crawler dht.Crawler
+	switch sniffer.mode {
+	case SybilMode:
+		crawler = dht.NewSybilCrawler(sniffer.ip, sniffer.port)
+	default:
+		return errors.New("unknown sniff mode")
 	}
+	return crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
+		address := fmt.Sprintf("%s:%d", ip, port)
+		meta, _ := bt.FetchMetadata(infoHash, address)
+		if sniffer.pipeline != nil {
+			sniffer.pipeline.DisposeMeta(loadMeta(meta, infoHash))
+		}
+	})
 }
 
 func loadMeta(info map[string]interface{}, hash string) Meta {
 	name := info["name"].(string)
 	if l, ok := info["length"]; ok {
 		size := l.(int)
-		files := make([]File, 1)
-		files[0] = File{name, size}
+		files := make([]struct {
+			Path string
+			Size int
+		}, 1)
+		files[0] = struct {
+			Path string
+			Size int
+		}{name, size}
 		return Meta{
 			Hash:  hash,
 			Name:  name,
@@ -73,13 +108,19 @@ func loadMeta(info map[string]interface{}, hash string) Meta {
 	}
 
 	fs := info["files"].([]interface{})
-	files := make([]File, len(fs))
+	files := make([]struct {
+		Path string
+		Size int
+	}, len(fs))
 	size := 0
 	for i, f := range fs {
 		file := f.(map[string]interface{})
 		path := joinPath(file["path"].([]interface{}), "/")
 		length := file["length"].(int)
-		files[i] = File{path, length}
+		files[i] = struct {
+			Path string
+			Size int
+		}{path, length}
 		size += length
 	}
 
@@ -139,8 +180,8 @@ func NewSimplePipelineWithBuf(bufSize int) *SimplePipeline {
 	}
 }
 
-// HandleMeta will handle meta
-func (p *SimplePipeline) HandleMeta(meta Meta) {
+// DisposeMeta will handle meta
+func (p *SimplePipeline) DisposeMeta(meta Meta) {
 	p.ch <- meta
 }
 

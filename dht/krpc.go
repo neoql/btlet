@@ -117,14 +117,23 @@ func (dispatcher *TransactionDispatcher) mkRemoveCallback(t Transaction) func() 
 }
 
 // DisposeResponse dispose response.
-func (dispatcher *TransactionDispatcher) DisposeResponse(transactionID string,
-	nd *Node, resp map[string]interface{}) {
-
+func (dispatcher *TransactionDispatcher) DisposeResponse(transactionID string, nd *Node, resp map[string]interface{}) {
 	v, ok := dispatcher.transactions.Load(transactionID)
 	if ok {
-		context := v.(*transactionBox)
-		context.keepAlive()
-		context.transaction.OnResponse(dispatcher.handle, nd, resp)
+		box := v.(*transactionBox)
+		box.keepAlive()
+		box.transaction.OnResponse(dispatcher.handle, nd, resp)
+	}
+	return
+}
+
+// DisposeError dispose error
+func (dispatcher *TransactionDispatcher) DisposeError(transactionID string, code int, describe string) {
+	v, ok := dispatcher.transactions.Load(transactionID)
+	if ok {
+		box := v.(*transactionBox)
+		box.keepAlive()
+		box.transaction.OnError(code, describe)
 	}
 	return
 }
