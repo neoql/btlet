@@ -36,9 +36,9 @@ import (
 
 func main() {
     builder := btlet.NewSnifferBuilder()
-	p := btlet.NewSimplePipeline()
-	s := builder.NewSniffer(p)
-	go s.Sniff(context.TODO())
+    p := btlet.NewSimplePipeline()
+    s := builder.NewSniffer(p)
+    go s.Sniff(context.TODO())
     
     for meta := range p.MetaChan() {
         fmt.Println(meta)
