@@ -96,9 +96,9 @@ type sybilTransaction struct {
 
 func newSybilTransaction(id string, callback CrawCallback) *sybilTransaction {
 	return &sybilTransaction{
-		id: tools.RandomString(2),
+		id:           tools.RandomString(2),
 		target:       tools.RandomString(20),
-		filter:       newNodeFilter(),
+		filter:       newNodeFilter(8 * 1024 * 1024),
 		crawCallback: callback,
 	}
 }
@@ -131,10 +131,12 @@ func (transaction *sybilTransaction) OnLaunch(handle Handle) {
 	transaction.findTargetNode(handle, transaction.Target(), nodes...)
 }
 
-func (transaction *sybilTransaction) OnError(code int, describe string) {}
+func (transaction *sybilTransaction) OnError(code int, describe string) bool {
+	return true
+}
 
 func (transaction *sybilTransaction) OnResponse(handle Handle,
-	nd *Node, resp map[string]interface{}) {
+	nd *Node, resp map[string]interface{}) bool {
 
 	transaction.filter.AddNode(nd)
 
@@ -151,6 +153,7 @@ func (transaction *sybilTransaction) OnResponse(handle Handle,
 			}
 		}
 	}
+	return true
 }
 
 func (transaction *sybilTransaction) OnQuery(handle Handle,
@@ -195,7 +198,11 @@ func (transaction *sybilTransaction) OnTimeout(handle Handle) bool {
 	transaction.target = transaction.target[:len] + tools.RandomString(uint(20-len))
 	transaction.filter.Reset()
 
-	return false
+	return true
+}
+
+func (transaction *sybilTransaction) OnFinish(handle Handle) {
+
 }
 
 func (transaction *sybilTransaction) findTargetNode(handle Handle, target string, nodes ...*Node) {
@@ -221,22 +228,30 @@ func makeID(dst string, id string) string {
 }
 
 type nodeFilter struct {
-	lock sync.RWMutex
-	core *bloom.BloomFilter
+	lock   sync.RWMutex
+	core   *bloom.BloomFilter
+	amount uint
+	cap    uint
 }
 
-func newNodeFilter() *nodeFilter {
+func newNodeFilter(cap uint) *nodeFilter {
 	return &nodeFilter{
-		core: bloom.NewWithEstimates(8*1024*1024, 0.001),
+		core: bloom.NewWithEstimates(cap, 0.001),
+		cap:  cap,
 	}
 }
 
-func (filter *nodeFilter) AddNode(nd *Node) {
+func (filter *nodeFilter) AddNode(nd *Node) bool {
 	filter.lock.Lock()
 	filter.lock.Unlock()
 
 	key := fmt.Sprintf("%s:%d", nd.Addr.IP, nd.Addr.Port)
 	filter.core.AddString(key)
+	if !filter.core.TestAndAddString(key) {
+		filter.amount++
+		return false
+	}
+	return true
 }
 
 func (filter *nodeFilter) Check(nd *Node) bool {
@@ -251,4 +266,8 @@ func (filter *nodeFilter) Reset() {
 	filter.lock.Lock()
 	filter.lock.Unlock()
 	filter.core.ClearAll()
+}
+
+func (filter *nodeFilter) IsFull() bool {
+	return filter.amount >= filter.cap
 }

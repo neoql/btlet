@@ -18,10 +18,11 @@ type Transaction interface {
 	ID() string
 	ShelfLife() time.Duration
 
-	OnTimeout(handle Handle) bool
 	OnLaunch(handle Handle)
-	OnResponse(handle Handle, nd *Node, resp map[string]interface{})
-	OnError(code int, describe string)
+	OnFinish(handle Handle)
+	OnResponse(handle Handle, nd *Node, resp map[string]interface{}) bool
+	OnError(code int, describe string) bool
+	OnTimeout(handle Handle) bool
 }
 
 type transactionBox struct {
@@ -59,7 +60,7 @@ LOOP:
 		case <-box.alive:
 			timeout.Stop()
 		case <-timeout.C:
-			if box.transaction.OnTimeout(handle) {
+			if !box.transaction.OnTimeout(handle) {
 				rmself()
 				break LOOP
 			}
@@ -68,6 +69,7 @@ LOOP:
 			break LOOP
 		}
 	}
+	box.transaction.OnFinish(handle)
 }
 
 // TransactionDispatcher can dispatch transactions
@@ -93,13 +95,9 @@ func (dispatcher *TransactionDispatcher) Add(t Transaction) error {
 		return errors.New("transation id is already exist")
 	}
 
-	go box.loop(dispatcher.handle, dispatcher.mkRemoveCallback(t))
+	go box.loop(dispatcher.handle, dispatcher.mkRemoveSelf(t))
 
 	return nil
-}
-
-func (dispatcher *TransactionDispatcher) remove(transactionID string) {
-	dispatcher.transactions.Delete(transactionID)
 }
 
 // Remove the transaction from the dispatcher.
@@ -110,9 +108,9 @@ func (dispatcher *TransactionDispatcher) Remove(transactionID string) {
 	}
 }
 
-func (dispatcher *TransactionDispatcher) mkRemoveCallback(t Transaction) func() {
+func (dispatcher *TransactionDispatcher) mkRemoveSelf(t Transaction) func() {
 	return func() {
-		dispatcher.remove(t.ID())
+		dispatcher.transactions.Delete(t.ID())
 	}
 }
 
@@ -122,7 +120,9 @@ func (dispatcher *TransactionDispatcher) DisposeResponse(transactionID string, n
 	if ok {
 		box := v.(*transactionBox)
 		box.keepAlive()
-		box.transaction.OnResponse(dispatcher.handle, nd, resp)
+		if !box.transaction.OnResponse(dispatcher.handle, nd, resp) {
+			box.done()
+		}
 	}
 	return
 }
@@ -133,7 +133,9 @@ func (dispatcher *TransactionDispatcher) DisposeError(transactionID string, code
 	if ok {
 		box := v.(*transactionBox)
 		box.keepAlive()
-		box.transaction.OnError(code, describe)
+		if !box.transaction.OnError(code, describe) {
+			box.done()
+		}
 	}
 	return
 }
