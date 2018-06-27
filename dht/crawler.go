@@ -92,6 +92,7 @@ type sybilTransaction struct {
 	target       string
 	filter       *nodeFilter
 	crawCallback CrawCallback
+	finish       chan struct{}
 }
 
 func newSybilTransaction(id string, callback CrawCallback) *sybilTransaction {
@@ -100,6 +101,7 @@ func newSybilTransaction(id string, callback CrawCallback) *sybilTransaction {
 		target:       tools.RandomString(20),
 		filter:       newNodeFilter(8 * 1024 * 1024),
 		crawCallback: callback,
+		finish:       make(chan struct{}),
 	}
 }
 
@@ -118,8 +120,26 @@ func (transaction *sybilTransaction) Target() string {
 }
 
 func (transaction *sybilTransaction) OnLaunch(handle Handle) {
-	nodes := make([]*Node, len(defaultBootstrap))
-	for i, url := range defaultBootstrap {
+	transaction.boot(handle, defaultBootstrap)
+	go func() {
+	LOOP:
+		for {
+			select {
+			case <-time.After(time.Minute):
+				if transaction.filter.IsFull() {
+					transaction.changeTarget()
+					transaction.filter.Reset()
+				}
+			case <-transaction.finish:
+				break LOOP
+			}
+		}
+	}()
+}
+
+func (transaction *sybilTransaction) boot(handle Handle, bootstrap []string) {
+	nodes := make([]*Node, len(bootstrap))
+	for i, url := range bootstrap {
 		addr, err := net.ResolveUDPAddr("udp", url)
 		if err != nil {
 			// TODO: handle error
@@ -189,20 +209,22 @@ func (transaction *sybilTransaction) OnQuery(handle Handle,
 }
 
 func (transaction *sybilTransaction) OnTimeout(handle Handle) bool {
-	defer transaction.OnLaunch(handle)
+	defer transaction.boot(handle, defaultBootstrap)
+	transaction.changeTarget()
+	transaction.filter.Reset()
+	return true
+}
 
+func (transaction *sybilTransaction) changeTarget() {
 	transaction.lock.Lock()
 	defer transaction.lock.Unlock()
 
 	len := rand.Int() % 20
 	transaction.target = transaction.target[:len] + tools.RandomString(uint(20-len))
-	transaction.filter.Reset()
-
-	return true
 }
 
 func (transaction *sybilTransaction) OnFinish(handle Handle) {
-
+	close(transaction.finish)
 }
 
 func (transaction *sybilTransaction) findTargetNode(handle Handle, target string, nodes ...*Node) {
@@ -264,10 +286,13 @@ func (filter *nodeFilter) Check(nd *Node) bool {
 
 func (filter *nodeFilter) Reset() {
 	filter.lock.Lock()
-	filter.lock.Unlock()
+	defer filter.lock.Unlock()
 	filter.core.ClearAll()
+	filter.amount = 0
 }
 
 func (filter *nodeFilter) IsFull() bool {
+	filter.lock.RLock()
+	defer filter.lock.RUnlock()
 	return filter.amount >= filter.cap
 }
