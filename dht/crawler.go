@@ -22,9 +22,10 @@ type Crawler interface {
 
 // SybilCrawler can crawl info hash from DHT.
 type SybilCrawler struct {
-	ip     string
-	port   int
-	nodeID string
+	ip         string
+	port       int
+	nodeID     string
+	maxWorkers int
 }
 
 // NewSybilCrawler returns a new Crawler instance.
@@ -36,12 +37,19 @@ func NewSybilCrawler(ip string, port int) *SybilCrawler {
 	}
 }
 
+// SetMaxWorkers set the max goroutine will be create to dispose dht message.
+// If maxWorkers smaller than 0. it won't set upper limit.
+func (crawler *SybilCrawler) SetMaxWorkers(n int) {
+	crawler.maxWorkers = n
+}
+
 // Crawl ovrride Crawler.Crawl
 func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) error {
 	core, err := NewCore(crawler.ip, crawler.port)
 	if err != nil {
 		return err
 	}
+	core.SetMaxWorkers(crawler.maxWorkers)
 
 	handle := core.Handle(crawler.nodeID)
 	dispatcher := NewTransactionDispatcher(handle)

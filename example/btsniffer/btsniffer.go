@@ -11,6 +11,9 @@ import (
 
 func main() {
 	builder := btlet.NewSnifferBuilder()
+	// 如果想要限制性能可以通过设置builder.MaxWorkers来设置。数值可以根据情况设置
+	// example: 
+	// builder.MaxWorkers = 256
 	p := btlet.NewSimplePipelineWithBuf(512)
 	s := builder.NewSniffer(p)
 	go s.Sniff(context.TODO())

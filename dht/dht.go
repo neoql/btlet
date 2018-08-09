@@ -31,7 +31,8 @@ type MessageDisposer interface {
 
 // Core is the core of dht.
 type Core struct {
-	conn *net.UDPConn
+	conn       *net.UDPConn
+	maxWorkers int
 }
 
 // NewCore returns a new Core instance.
@@ -51,6 +52,12 @@ func NewCore(ip string, port int) (*Core, error) {
 	}, nil
 }
 
+// SetMaxWorkers set the max goroutine will be create to dispose dht message.
+// If maxWorkers smaller than 0. it won't set upper limit.
+func (core *Core) SetMaxWorkers(n int) {
+	core.maxWorkers = n
+}
+
 // Addr returns the Addr of self.
 func (core *Core) Addr() net.Addr {
 	return core.conn.LocalAddr()
@@ -59,12 +66,28 @@ func (core *Core) Addr() net.Addr {
 // Serv starts serving.
 func (core *Core) Serv(ctx context.Context, disposer MessageDisposer) (err error) {
 	defer core.conn.Close()
+	
+	var dispMsg func (disposer MessageDisposer, addr *net.UDPAddr, data []byte)
+	if core.maxWorkers <= 0 {
+		dispMsg = func (disposer MessageDisposer, addr *net.UDPAddr, data []byte)  {
+			go core.disposeMessage(disposer, addr, data)
+		}
+	} else {
+		lmt := make(chan struct{}, core.maxWorkers)
+		dispMsg = func (disposer MessageDisposer, addr *net.UDPAddr, data []byte)  {
+			lmt <- struct{}{}
+			go func() {
+				core.disposeMessage(disposer, addr, data)
+				<-lmt
+			}()
+		}
+	}
 
-LOOP:
+loop:
 	for {
 		select {
 		case <-ctx.Done():
-			break LOOP
+			break loop
 		default:
 		}
 
@@ -75,7 +98,7 @@ LOOP:
 			continue
 		}
 
-		go core.disposeMessage(disposer, addr, buf[:n])
+		dispMsg(disposer, addr, buf[:n])
 	}
 	return nil
 }

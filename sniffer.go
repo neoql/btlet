@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"errors"
 
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
@@ -36,9 +35,10 @@ const (
 
 // SnifferBuilder can build Sniffer
 type SnifferBuilder struct {
-	IP   string
-	Port int
-	Mode SniffMode
+	IP         string
+	Port       int
+	Mode       SniffMode
+	MaxWorkers int
 }
 
 // NewSnifferBuilder returns a new SnifferBuilder with default config
@@ -50,35 +50,38 @@ func NewSnifferBuilder() *SnifferBuilder {
 	}
 }
 
-// NewSniffer returns a Sniffer with the builder's config
+// NewSniffer returns a Sniffer with the builder's config.
+// If Mode is unknow will return nil
 func (builder *SnifferBuilder) NewSniffer(p Pipeline) *Sniffer {
-	return &Sniffer{
-		ip:       builder.IP,
-		port:     builder.Port,
-		mode:     builder.Mode,
-		pipeline: p,
+	var crawler dht.Crawler
+	switch builder.Mode {
+	case SybilMode:
+		c := dht.NewSybilCrawler(builder.IP, builder.Port)
+		c.SetMaxWorkers(builder.MaxWorkers)
+		crawler = c
+	default:
+		return nil
 	}
+	return NewSniffer(crawler, p)
 }
 
 // Sniffer can crawl Meta from dht.
 type Sniffer struct {
-	ip   string
-	port int
-	mode SniffMode
-
+	crawler  dht.Crawler
 	pipeline Pipeline
+}
+
+// NewSniffer returns a Sniffer
+func NewSniffer(c dht.Crawler, p Pipeline) *Sniffer {
+	return &Sniffer{
+		crawler:  c,
+		pipeline: p,
+	}
 }
 
 // Sniff starts sniff meta
 func (sniffer *Sniffer) Sniff(ctx context.Context) error {
-	var crawler dht.Crawler
-	switch sniffer.mode {
-	case SybilMode:
-		crawler = dht.NewSybilCrawler(sniffer.ip, sniffer.port)
-	default:
-		return errors.New("unknown sniff mode")
-	}
-	return crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
+	return sniffer.crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		meta, _ := bt.FetchMetadata(infoHash, address)
 		if sniffer.pipeline != nil {
