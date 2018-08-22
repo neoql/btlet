@@ -415,21 +415,24 @@ func wrapStruct2Map(val reflect.Value, m map[string]reflect.Value) {
 	}
 
 	for i := 0; i < val.NumField(); i++ {
+		var name string
 		f := t.Field(i)
 		if f.PkgPath != "" {
 			continue
 		}
 		v := val.FieldByIndex(f.Index)
 		tag, ok := f.Tag.Lookup("bencode")
-		if !ok {
-			m[f.Name] = v
-			continue
+		name = f.Name
+		if ok {
+			key, opts := parseTag(tag)
+			if opts.Ignored() {
+				continue
+			}
+			if key != "" {
+				name = key
+			}
 		}
-		key, opts := parseTag(tag)
-		if opts.Ignored() {
-			continue
-		}
-		m[key] = v
+		m[name] = v
 	}
 }
 

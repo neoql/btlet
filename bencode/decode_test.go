@@ -27,6 +27,11 @@ func TestDecode(t *testing.T) {
 		Z string `bencode:"zff"`
 	}
 
+	type dT2 struct {
+		A string
+		B string `bencode:","`
+	}
+
 	now := time.Now()
 
 	var decodeCases = []testCase{
@@ -211,6 +216,9 @@ func TestDecode(t *testing.T) {
 		// Fail on unordered dictionaries
 		{"d1:Yi10e1:X1:a3:zff1:ce", new(dT), dT{}, true, true, false},
 		{"d3:zff1:c1:Yi10e1:X1:ae", new(dT), dT{}, true, true, false},
+
+		// tag ","
+		{"d1:A5:hello1:B5:worlde", new(dT2), dT2{"hello", "world"}, false, false, false},
 	}
 
 	for i, tt := range decodeCases {
