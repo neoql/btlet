@@ -153,7 +153,11 @@ func (dec *Decoder) decodeInt(val reflect.Value) error {
 
 	switch val.Kind() {
 	default:
-		return &InvalidUnmarshalError{val.Type()}
+		return &UnmarshalTypeError{
+			Value:  "integer",
+			Type:   val.Type(),
+			Offset: int64(dec.offset),
+		}
 	case reflect.Interface:
 		n, err := strconv.ParseInt(digits, 10, 64)
 		if err != nil {
@@ -209,10 +213,18 @@ func (dec *Decoder) decodeString(val reflect.Value) error {
 
 	switch val.Kind() {
 	default:
-		return &InvalidUnmarshalError{val.Type()}
+		return &UnmarshalTypeError{
+			Value:  "string",
+			Offset: int64(dec.offset),
+			Type:   val.Type(),
+		}
 	case reflect.Slice:
 		if val.Type() != reflectByteSliceType {
-			return &InvalidUnmarshalError{val.Type()}
+			return &UnmarshalTypeError{
+				Value:  "string",
+				Offset: int64(dec.offset),
+				Type:   val.Type(),
+			}
 		}
 		val.SetBytes(buf)
 	case reflect.String:
@@ -231,7 +243,11 @@ func (dec *Decoder) decodeList(val reflect.Value) error {
 	}
 
 	if val.Kind() != reflect.Array && val.Kind() != reflect.Slice {
-		return &InvalidUnmarshalError{val.Type()}
+		return &UnmarshalTypeError{
+			Value:  "list",
+			Offset: int64(dec.offset),
+			Type:   val.Type(),
+		}
 	}
 
 	//read out the l that prefixes the list

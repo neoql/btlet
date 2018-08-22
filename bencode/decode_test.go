@@ -230,6 +230,9 @@ func TestDecode(t *testing.T) {
 			t.Fatalf("#%d (%v): Expected err is nil", i, tt.in)
 			continue
 		}
+		if !tt.err && err == nil && dec.BytesParsed() != len(tt.in) {
+			t.Fatalf("#%d (%v): BytesParsed is a wrong value", i, tt.in)
+		}
 		v := reflect.ValueOf(tt.val).Elem().Interface()
 		if !reflect.DeepEqual(v, tt.expect) && !tt.err {
 			t.Fatalf("#%d (%v): Val: %#v != %#v", i, tt.in, v, tt.expect)

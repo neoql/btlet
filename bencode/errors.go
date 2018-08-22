@@ -6,7 +6,7 @@ import (
 
 // An UnmarshalTypeError describes a bencode value that was not appropriate for a value of a specific Go type.
 type UnmarshalTypeError struct {
-	Value  string       // description of bencode value - "integer -5", "string 'hello'", "list", "dict"
+	Value  string       // description of bencode value - "integer", "string", "list", "dict"
 	Type   reflect.Type // type of Go value it could not be assigned to
 	Offset int64        // error occurred after reading Offset bytes
 	Struct string       // name of the struct type containing the field
