@@ -15,10 +15,6 @@ var (
 	reflectStringType    = reflect.TypeOf("")
 )
 
-var (
-	emptyValue = reflect.Value{}
-)
-
 // Unmarshal parses the bencode data and stores the result in the value pointed to by v.
 // If v is nil or not a pointer, Unmarshal returns an InvalidUnmarshalError.
 func Unmarshal(data []byte, v interface{}) error {
@@ -276,6 +272,7 @@ func (dec *Decoder) decodeList(val reflect.Value) error {
 				if err != nil {
 					return err
 				}
+				continue
 			}
 			err := dec.readValueInto(nil)
 			if err != nil {
@@ -366,7 +363,7 @@ func (dec *Decoder) decodeDict(val reflect.Value) error {
 		var e reflect.Value
 		if isMap {
 			e = val.MapIndex(reflect.ValueOf(key))
-			if e == emptyValue {
+			if !e.IsValid() {
 				e = reflect.New(t.Elem()).Elem()
 			}
 		} else {
@@ -403,7 +400,7 @@ func wrapStruct2Map(val reflect.Value, m map[string]reflect.Value) {
 			continue
 		}
 		v := val.FieldByIndex(f.Index)
-		if f.Anonymous && f.Tag == "" {
+		if f.Anonymous && f.Tag.Get("bencode") == "" {
 			if v.Kind() == reflect.Ptr {
 				if v.IsNil() {
 					v.Set(reflect.New(v.Type().Elem()))
@@ -420,8 +417,11 @@ func wrapStruct2Map(val reflect.Value, m map[string]reflect.Value) {
 		if f.PkgPath != "" {
 			continue
 		}
-		v := val.FieldByIndex(f.Index)
 		tag, ok := f.Tag.Lookup("bencode")
+		if f.Anonymous && !ok {
+			continue
+		}
+		v := val.FieldByIndex(f.Index)
 		name = f.Name
 		if ok {
 			key, opts := parseTag(tag)

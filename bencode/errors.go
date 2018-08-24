@@ -44,3 +44,13 @@ func (e *InvalidUnmarshalError) Error() string {
 	}
 	return "bencode: Unmarshal(nil " + e.Type.String() + ")"
 }
+
+// An UnsupportedTypeError is returned by Marshal when attempting
+// to encode an unsupported value type.
+type UnsupportedTypeError struct {
+	Type reflect.Type
+}
+
+func (e *UnsupportedTypeError) Error() string {
+	return "bencode: unsupported type: " + e.Type.String()
+}

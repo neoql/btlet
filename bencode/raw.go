@@ -12,7 +12,7 @@ type RawMessage []byte
 // MarshalBencode returns m as the bencoding of m.
 func (m RawMessage) MarshalBencode() ([]byte, error) {
 	if m == nil {
-		return []byte("null"), nil
+		return []byte(""), nil
 	}
 	return m, nil
 }
@@ -20,7 +20,7 @@ func (m RawMessage) MarshalBencode() ([]byte, error) {
 // UnmarshalBencode sets *m to a copy of data.
 func (m *RawMessage) UnmarshalBencode(data []byte) error {
 	if m == nil {
-		return errors.New("json.RawMessage: UnmarshalJSON on nil pointer")
+		return errors.New("bencode.RawMessage: UnmarshalBencode on nil pointer")
 	}
 	*m = append((*m)[0:0], data...)
 	return nil

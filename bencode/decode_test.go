@@ -1,11 +1,8 @@
 package bencode
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +27,47 @@ func TestDecode(t *testing.T) {
 	type dT2 struct {
 		A string
 		B string `bencode:","`
+	}
+
+	type Embedded struct {
+		B string
+	}
+
+	type discardNonFieldDef struct {
+		B string
+		D string
+	}
+
+	type tagCover struct {
+		A  string
+		A1 string `bencode:"A"`
+	}
+
+	type withUnmarshalerField struct {
+		X     string       `bencode:"x"`
+		Time  myTimeType   `bencode:"t"`
+		Foo   myBoolType   `bencode:"f"`
+		Bar   myStringType `bencode:"b"`
+		Slice mySliceType  `bencode:"s"`
+		Y     string       `bencode:"y"`
+	}
+
+	type withTextUnmarshalerField struct {
+		X     string           `bencode:"x"`
+		Foo   myBoolTextType   `bencode:"f"`
+		Bar   myTextStringType `bencode:"b"`
+		Slice myTextSliceType  `bencode:"s"`
+		Y     string           `bencode:"y"`
+	}
+
+	type withErrUnmarshalerField struct {
+		Name  string           `bencode:"n"`
+		Error errorMarshalType `bencode:"e"`
+	}
+
+	type withErrTextUnmarshalerField struct {
+		Name  string               `bencode:"n"`
+		Error errorTextMarshalType `bencode:"e"`
 	}
 
 	now := time.Now()
@@ -281,166 +319,51 @@ func TestRawDecode(t *testing.T) {
 	}
 }
 
-type myStringType string
-
-// UnmarshalBencode implements Unmarshaler.UnmarshalBencode
-func (mst *myStringType) UnmarshalBencode(b []byte) error {
-	var raw []byte
-	err := Unmarshal(b, &raw)
-	if err != nil {
-		return err
+func TestNestedRawDecode(t *testing.T) {
+	type testCase struct {
+		in     string
+		val    interface{}
+		expect interface{}
+		err    bool
 	}
 
-	*mst = myStringType(raw)
-	return nil
-}
-
-type mySliceType []interface{}
-
-// UnmarshalBencode implements Unmarshaler.UnmarshalBencode
-func (mst *mySliceType) UnmarshalBencode(b []byte) error {
-	m := make(map[string]interface{})
-	err := Unmarshal(b, &m)
-	if err != nil {
-		return err
+	type message struct {
+		Key string
+		Val int
+		Raw RawMessage
 	}
 
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	raw := make([]interface{}, 0, len(m)*2)
-	for _, key := range keys {
-		raw = append(raw, key, m[key])
-	}
-
-	*mst = mySliceType(raw)
-	return nil
-}
-
-type myTextStringType string
-
-// UnmarshalText implements TextUnmarshaler.UnmarshalText
-func (mst *myTextStringType) UnmarshalText(b []byte) error {
-	*mst = myTextStringType(bytes.TrimPrefix(b, []byte("foo_")))
-	return nil
-}
-
-type myTextSliceType []string
-
-// UnmarshalText implements TextUnmarshaler.UnmarshalText
-func (mst *myTextSliceType) UnmarshalText(b []byte) error {
-	raw := string(b)
-	*mst = strings.Split(raw, ",")
-	return nil
-}
-
-type myTimeType struct {
-	time.Time
-}
-
-// UnmarshalBencode implements Unmarshaler.UnmarshalBencode
-func (mtt *myTimeType) UnmarshalBencode(b []byte) error {
-	var epoch int64
-	err := Unmarshal(b, &epoch)
-	if err != nil {
-		return err
+	var cases = []testCase{
+		{`li5e5:hellod1:a1:beli5eee`, new([]RawMessage), []RawMessage{
+			RawMessage(`i5e`),
+			RawMessage(`5:hello`),
+			RawMessage(`d1:a1:be`),
+			RawMessage(`li5ee`),
+		}, false},
+		{`d1:a1:b1:c1:de`, new(map[string]RawMessage), map[string]RawMessage{
+			"a": RawMessage(`1:b`),
+			"c": RawMessage(`1:d`),
+		}, false},
+		{`d3:Key5:hello3:Rawldedei5e1:ae3:Vali10ee`, new(message), message{
+			Key: "hello",
+			Val: 10,
+			Raw: RawMessage(`ldedei5e1:ae`),
+		}, false},
 	}
 
-	mtt.Time = time.Unix(epoch, 0)
-	return nil
-}
-
-type myBoolType bool
-
-// UnmarshalBencode implements Unmarshaler.UnmarshalBencode
-func (mbt *myBoolType) UnmarshalBencode(b []byte) error {
-	var str string
-	err := Unmarshal(b, &str)
-	if err != nil {
-		return err
+	for i, tt := range cases {
+		err := Unmarshal([]byte(tt.in), tt.val)
+		if !tt.err && err != nil {
+			t.Errorf("#%d: Unexpected err: %v", i, err)
+			continue
+		}
+		if tt.err && err == nil {
+			t.Errorf("#%d: Expected err is nil", i)
+			continue
+		}
+		v := reflect.ValueOf(tt.val).Elem().Interface()
+		if !reflect.DeepEqual(v, tt.expect) && !tt.err {
+			t.Errorf("#%d: Val:\n%#v !=\n%#v", i, v, tt.expect)
+		}
 	}
-
-	switch str {
-	case "y":
-		*mbt = true
-	case "n":
-		*mbt = false
-	default:
-		err = errors.New("invalid myBoolType")
-	}
-
-	return err
-}
-
-type errorMarshalType struct{}
-
-// UnmarshalBencode implements Unmarshaler.UnmarshalBencode
-func (emt *errorMarshalType) UnmarshalBencode([]byte) error {
-	return errors.New("oops")
-}
-
-type withUnmarshalerField struct {
-	X     string       `bencode:"x"`
-	Time  myTimeType   `bencode:"t"`
-	Foo   myBoolType   `bencode:"f"`
-	Bar   myStringType `bencode:"b"`
-	Slice mySliceType  `bencode:"s"`
-	Y     string       `bencode:"y"`
-}
-
-type withTextUnmarshalerField struct {
-	X     string           `bencode:"x"`
-	Foo   myBoolTextType   `bencode:"f"`
-	Bar   myTextStringType `bencode:"b"`
-	Slice myTextSliceType  `bencode:"s"`
-	Y     string           `bencode:"y"`
-}
-
-type withErrUnmarshalerField struct {
-	Name  string           `bencode:"n"`
-	Error errorMarshalType `bencode:"e"`
-}
-
-type withErrTextUnmarshalerField struct {
-	Name  string               `bencode:"n"`
-	Error errorTextMarshalType `bencode:"e"`
-}
-
-type myBoolTextType bool
-
-// UnmarshalText implements TextUnmarshaler.UnmarshalText
-func (mbt *myBoolTextType) UnmarshalText(b []byte) error {
-	switch string(b) {
-	case "y":
-		*mbt = true
-	case "n":
-		*mbt = false
-	default:
-		return errors.New("invalid myBoolType")
-	}
-	return nil
-}
-
-type errorTextMarshalType struct{}
-
-// UnmarshalText implements TextUnmarshaler.UnmarshalText
-func (emt errorTextMarshalType) UnmarshalText([]byte) error {
-	return errors.New("oops")
-}
-
-type Embedded struct {
-	B string
-}
-
-type discardNonFieldDef struct {
-	B string
-	D string
-}
-
-type tagCover struct {
-	A  string
-	A1 string `bencode:"A"`
 }
