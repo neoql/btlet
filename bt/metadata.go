@@ -87,8 +87,8 @@ func FetchMetadata(infoHash string, address string) (meta map[string]interface{}
 					return nil, err
 				}
 				m := msg["m"].(map[string]interface{})
-				size := msg["metadata_size"].(int)
-				ut := byte(m["ut_metadata"].(int))
+				size := int(msg["metadata_size"].(int64))
+				ut := byte(m["ut_metadata"].(int64))
 				num := reqMetadataPieces(conn, ut, size)
 				pieces = make([][]byte, num)
 			} else {
@@ -103,11 +103,11 @@ func FetchMetadata(infoHash string, address string) (meta map[string]interface{}
 					return nil, err
 				}
 				excess := content[dec.BytesParsed():]
-				if msg["msg_type"] != data {
+				if msg["msg_type"] != int64(data) {
 					continue
 				}
 
-				index := msg["piece"].(int)
+				index := int(msg["piece"].(int64))
 				pieces[index] = excess
 
 				if checkPiecesDone(pieces) {

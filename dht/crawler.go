@@ -201,7 +201,7 @@ func (transaction *sybilTransaction) OnQuery(handle Handle,
 		}))
 	case "announce_peer":
 		infoHash := args["info_hash"].(string)
-		port := args["port"].(int)
+		port := int(args["port"].(int64))
 		if transaction.crawCallback != nil {
 			defer transaction.crawCallback(infoHash, nd.Addr.IP, port)
 		}

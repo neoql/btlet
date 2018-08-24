@@ -168,7 +168,7 @@ func (dec *Decoder) decodeInt(val reflect.Value) error {
 			Offset: int64(dec.offset),
 		}
 	case reflect.Interface:
-		n, err := strconv.Atoi(digits)
+		n, err := strconv.ParseInt(digits, 10, 64)
 		if err != nil {
 			return err
 		}

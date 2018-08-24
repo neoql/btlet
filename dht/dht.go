@@ -151,7 +151,7 @@ func (core *Core) disposeMessage(disposer MessageDisposer, addr *net.UDPAddr, da
 	case "e":
 		transactionID := msg["t"].(string)
 		e := msg["e"].([]interface{})
-		return disposer.DisposeError(transactionID, e[0].(int), e[1].(string))
+		return disposer.DisposeError(transactionID, int(e[0].(int64)), e[1].(string))
 	default:
 		return disposer.DisposeUnknownMessage(msg["y"].(string), msg)
 	}

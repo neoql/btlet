@@ -93,7 +93,7 @@ func (sniffer *Sniffer) Sniff(ctx context.Context) error {
 func loadMeta(info map[string]interface{}, hash string) Meta {
 	name := info["name"].(string)
 	if l, ok := info["length"]; ok {
-		size := l.(int)
+		size := int(l.(int64))
 		files := make([]struct {
 			Path string
 			Size int
@@ -119,7 +119,7 @@ func loadMeta(info map[string]interface{}, hash string) Meta {
 	for i, f := range fs {
 		file := f.(map[string]interface{})
 		path := joinPath(file["path"].([]interface{}), "/")
-		length := file["length"].(int)
+		length := int(file["length"].(int64))
 		files[i] = struct {
 			Path string
 			Size int
