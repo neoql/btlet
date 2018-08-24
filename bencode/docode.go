@@ -34,6 +34,9 @@ type Decoder struct {
 	offset                int
 	disallowUnknownFields bool
 	disallowUnorderedKeys bool
+
+	unknownFieldsErr error
+	unorderedKeysErr error
 }
 
 // NewDecoder returns a new decoder that reads from r.
@@ -49,7 +52,17 @@ func (dec *Decoder) Decode(v interface{}) error {
 	}
 	// We decode rv not rv.Elem because the Unmarshaler interface
 	// test must be applied at the top level of the value.
-	return dec.decode(rv)
+	err := dec.decode(rv)
+	if err != nil {
+		return err
+	}
+	if dec.unknownFieldsErr != nil {
+		return dec.unknownFieldsErr
+	}
+	if dec.unorderedKeysErr != nil {
+		return dec.unorderedKeysErr
+	}
+	return nil
 }
 
 // DisallowUnknownFields causes the Decoder to return an
@@ -353,9 +366,10 @@ func (dec *Decoder) decodeDict(val reflect.Value) error {
 			return err
 		}
 
-		if dec.disallowUnorderedKeys && lastKey > key {
-			return &SyntaxError{
-				fmt.Sprintf("unordered dictionary: %q appears before %q", lastKey, key), int64(dec.offset),
+		if dec.disallowUnorderedKeys && lastKey > key && dec.unorderedKeysErr == nil {
+			dec.unorderedKeysErr = &SyntaxError{
+				fmt.Sprintf("unordered dictionary: %q appears before %q", lastKey, key), 
+				int64(dec.offset),
 			}
 		}
 		lastKey = key
@@ -370,8 +384,11 @@ func (dec *Decoder) decodeDict(val reflect.Value) error {
 			var ok bool
 			e, ok = m[key]
 			if !ok {
-				if dec.disallowUnknownFields {
-					return &SyntaxError{"disallow unknow fields", int64(dec.offset)}
+				if dec.disallowUnknownFields && dec.unknownFieldsErr == nil {
+					dec.unknownFieldsErr = &SyntaxError{
+						fmt.Sprintf("disallow unknow fields %s", key), 
+						int64(dec.offset),
+					}
 				}
 				err := dec.readValueInto(nil)
 				if err != nil {
