@@ -39,7 +39,7 @@ func mkExtMsg(id byte, data []byte) []byte {
 }
 
 func mkExtHandshakeMsg(dict map[string]interface{}) []byte {
-	data, _ := bencode.Encode(dict)
+	data, _ := bencode.Marshal(dict)
 	return mkExtMsg(0, data)
 }
 

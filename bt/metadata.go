@@ -150,7 +150,7 @@ func reqMetadataPieces(conn net.Conn, ut byte, size int) int {
 
 	go func() {
 		for i := 0; i < piecesNum; i++ {
-			content, _ := bencode.Encode(map[string]interface{}{
+			content, _ := bencode.Marshal(map[string]interface{}{
 				"msg_type": request,
 				"piece":    i,
 			})

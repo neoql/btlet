@@ -105,7 +105,7 @@ loop:
 
 // SendMessage will send message to the node.
 func (core *Core) SendMessage(nd *Node, msg map[string]interface{}) error {
-	data, err := bencode.Encode(msg)
+	data, err := bencode.Marshal(msg)
 	if err != nil {
 		// TODO: handle error
 		return err
