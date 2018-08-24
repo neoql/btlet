@@ -129,13 +129,12 @@ func (core *Core) disposeMessage(disposer MessageDisposer, addr *net.UDPAddr, da
 		}
 	}()
 
-	tmp, err := bencode.Decode(data)
+	var msg map[string]interface{}
+	err = bencode.Unmarshal(data, &msg)
 	if err != nil {
 		// TODO: handle error
 		return err
 	}
-
-	msg := tmp.(map[string]interface{})
 
 	switch msg["y"] {
 	case "q":

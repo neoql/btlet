@@ -80,11 +80,12 @@ func FetchMetadata(infoHash string, address string) (meta map[string]interface{}
 		case extID:
 			if resp[1] == 0 {
 				// handle handshake
-				d, err := bencode.Decode(resp[2:])
+				var msg map[string]interface{}
+				err = bencode.Unmarshal(resp[2:], &msg)
 				if err != nil {
+					// TODO: handle error
 					return nil, err
 				}
-				msg := d.(map[string]interface{})
 				m := msg["m"].(map[string]interface{})
 				size := msg["metadata_size"].(int)
 				ut := byte(m["ut_metadata"].(int))
@@ -95,11 +96,13 @@ func FetchMetadata(infoHash string, address string) (meta map[string]interface{}
 					return nil, errors.New("have not handshake")
 				}
 				content := resp[2:]
-				d, excess, err := bencode.DecodeWithExcess(content)
+				var msg map[string]interface{}
+				dec := bencode.NewDecoder(bytes.NewReader(content))
+				err = dec.Decode(&msg)
 				if err != nil {
 					return nil, err
 				}
-				msg := d.(map[string]interface{})
+				excess := content[dec.BytesParsed():]
 				if msg["msg_type"] != data {
 					continue
 				}
@@ -110,11 +113,12 @@ func FetchMetadata(infoHash string, address string) (meta map[string]interface{}
 				if checkPiecesDone(pieces) {
 					metadata := bytes.Join(pieces, nil)
 					if checkMetadata(metadata, infoHash) {
-						m, err := bencode.Decode(metadata)
+						var m map[string]interface{}
+						err := bencode.Unmarshal(metadata, &m)
 						if err != nil {
 							return nil, err
 						}
-						return m.(map[string]interface{}), nil
+						return m, nil
 					}
 					return nil, errors.New("wrong hash")
 				}

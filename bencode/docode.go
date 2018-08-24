@@ -172,7 +172,7 @@ func (dec *Decoder) decodeInt(val reflect.Value) error {
 		if err != nil {
 			return err
 		}
-		val.Set(reflect.ValueOf(n))
+		val.Set(reflect.ValueOf(int(n)))
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		n, err := strconv.ParseInt(digits, 10, 64)
 		if err != nil {
