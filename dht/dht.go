@@ -26,7 +26,7 @@ type MessageDisposer interface {
 	DisposeQuery(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error
 	DisposeResponse(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error
 	DisposeError(src *net.UDPAddr, transactionID string, code int, describe string) error
-	DisposeUnknownMessage(src *net.UDPAddr,  message map[string]interface{}) error
+	DisposeUnknownMessage(src *net.UDPAddr, message bencode.RawMessage) error
 }
 
 // Core is the core of dht.
@@ -66,22 +66,9 @@ func (core *Core) Addr() net.Addr {
 // Serv starts serving.
 func (core *Core) Serv(ctx context.Context, disposer MessageDisposer) (err error) {
 	defer core.conn.Close()
-	
-	var dispMsg func (disposer MessageDisposer, addr *net.UDPAddr, data []byte)
-	if core.maxWorkers <= 0 {
-		dispMsg = func (disposer MessageDisposer, addr *net.UDPAddr, data []byte)  {
-			go core.disposeMessage(disposer, addr, data)
-		}
-	} else {
-		lmt := make(chan struct{}, core.maxWorkers)
-		dispMsg = func (disposer MessageDisposer, addr *net.UDPAddr, data []byte)  {
-			lmt <- struct{}{}
-			go func() {
-				core.disposeMessage(disposer, addr, data)
-				<-lmt
-			}()
-		}
-	}
+
+	proxy := newDisposerProxy(disposer, core.maxWorkers)
+	buf := make([]byte, 8196)
 
 loop:
 	for {
@@ -90,15 +77,14 @@ loop:
 			break loop
 		default:
 		}
-
-		buf := make([]byte, 8196)
+		
 		n, addr, err := core.conn.ReadFromUDP(buf)
 		if err != nil {
 			// TODO: handle error
 			continue
 		}
 
-		dispMsg(disposer, addr, buf[:n])
+		core.disposeMessage(proxy, addr, buf[:n])
 	}
 	return nil
 }
@@ -167,4 +153,90 @@ func (h *handle) SendMessage(dst *net.UDPAddr, msg interface{}) error {
 
 func (h *handle) NodeID() string {
 	return h.nodeID
+}
+
+type disposerProxy struct {
+	disposeQuery          func(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error
+	disposeResponse       func(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error
+	disposeError          func(src *net.UDPAddr, transactionID string, code int, describe string) error
+	disposeUnknownMessage func(src *net.UDPAddr, message bencode.RawMessage) error
+}
+
+func newDisposerProxy(disposer MessageDisposer, maxWorkers int) *disposerProxy {
+	proxy := &disposerProxy{}
+	if maxWorkers <= 0 {
+		proxy.disposeQuery = func(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
+			go disposer.DisposeQuery(src, transactionID, q, args)
+			return nil
+		}
+
+		proxy.disposeResponse = func(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
+			go disposer.DisposeResponse(src, transactionID, resp)
+			return nil
+		}
+
+		proxy.disposeError = func(addr *net.UDPAddr, transactionID string, code int, describe string) error {
+			go disposer.DisposeError(addr, transactionID, code, describe)
+			return nil
+		}
+
+		proxy.disposeUnknownMessage = func(src *net.UDPAddr, message bencode.RawMessage) error {
+			go disposer.DisposeUnknownMessage(src, message)
+			return nil
+		}
+	} else {
+		lmt := make(chan struct{}, maxWorkers)
+		proxy.disposeQuery = func(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
+			lmt <- struct{}{}
+			go func() {
+				disposer.DisposeQuery(src, transactionID, q, args)
+				<-lmt
+			}()
+			return nil
+		}
+
+		proxy.disposeResponse = func(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
+			lmt <- struct{}{}
+			go func() {
+				disposer.DisposeResponse(src, transactionID, resp)
+				<-lmt
+			}()
+			return nil
+		}
+
+		proxy.disposeError = func(addr *net.UDPAddr, transactionID string, code int, describe string) error {
+			lmt <- struct{}{}
+			go func() {
+				disposer.DisposeError(addr, transactionID, code, describe)
+				<-lmt
+			}()
+			return nil
+		}
+
+		proxy.disposeUnknownMessage = func(src *net.UDPAddr, message bencode.RawMessage) error {
+			lmt <- struct{}{}
+			go func() {
+				disposer.DisposeUnknownMessage(src, message)
+				<-lmt
+			}()
+			return nil
+		}
+	}
+	return proxy
+}
+
+func (p *disposerProxy) DisposeQuery(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
+	return p.disposeQuery(src, transactionID, q, args)
+}
+
+func (p *disposerProxy) DisposeResponse(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
+	return p.disposeResponse(src, transactionID, resp)
+}
+
+func (p *disposerProxy) DisposeError(src *net.UDPAddr, transactionID string, code int, describe string) error {
+	return p.disposeError(src, transactionID, code, describe)
+}
+
+func (p *disposerProxy) DisposeUnknownMessage(src *net.UDPAddr, message bencode.RawMessage) error {
+	return p.disposeUnknownMessage(src, message)
 }

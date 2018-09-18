@@ -82,8 +82,12 @@ func NewSniffer(c dht.Crawler, p Pipeline) *Sniffer {
 // Sniff starts sniff meta
 func (sniffer *Sniffer) Sniff(ctx context.Context) error {
 	return sniffer.crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
+		defer recover()
 		address := fmt.Sprintf("%s:%d", ip, port)
-		meta, _ := bt.FetchMetadata(infoHash, address)
+		meta, err := bt.FetchMetadata(infoHash, address)
+		if err != nil {
+			return
+		}
 		if sniffer.pipeline != nil {
 			sniffer.pipeline.DisposeMeta(loadMeta(meta, infoHash))
 		}

@@ -91,7 +91,7 @@ func (disposer *sybilMessageDisposer) DisposeError(src *net.UDPAddr, transaction
 	return nil
 }
 
-func (disposer *sybilMessageDisposer) DisposeUnknownMessage(src *net.UDPAddr, message map[string]interface{}) error {
+func (disposer *sybilMessageDisposer) DisposeUnknownMessage(src *net.UDPAddr, message bencode.RawMessage) error {
 	return nil
 }
 
