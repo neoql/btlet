@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/neoql/btlet/tools"
+	"github.com/neoql/btlet/bencode"
 	"github.com/willf/bloom"
 )
 
@@ -76,21 +77,21 @@ type sybilMessageDisposer struct {
 	transaction *sybilTransaction
 }
 
-func (disposer *sybilMessageDisposer) DisposeQuery(nd *Node, transactionID string, q string, args map[string]interface{}) error {
-	disposer.transaction.OnQuery(disposer.handle, nd, transactionID, q, args)
+func (disposer *sybilMessageDisposer) DisposeQuery(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
+	disposer.transaction.OnQuery(disposer.handle, src, transactionID, q, args)
 	return nil
 }
 
-func (disposer *sybilMessageDisposer) DisposeResponse(nd *Node, transactionID string, resp map[string]interface{}) error {
-	disposer.dispatcher.DisposeResponse(transactionID, nd, resp)
+func (disposer *sybilMessageDisposer) DisposeResponse(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
+	disposer.dispatcher.DisposeResponse(src, transactionID, resp)
 	return nil
 }
 
-func (disposer *sybilMessageDisposer) DisposeError(transactionID string, code int, describe string) error {
+func (disposer *sybilMessageDisposer) DisposeError(src *net.UDPAddr, transactionID string, code int, describe string) error {
 	return nil
 }
 
-func (disposer *sybilMessageDisposer) DisposeUnknownMessage(y string, message map[string]interface{}) error {
+func (disposer *sybilMessageDisposer) DisposeUnknownMessage(src *net.UDPAddr, message map[string]interface{}) error {
 	return nil
 }
 
@@ -159,56 +160,86 @@ func (transaction *sybilTransaction) boot(handle Handle, bootstrap []string) {
 	transaction.findTargetNode(handle, transaction.Target(), nodes...)
 }
 
-func (transaction *sybilTransaction) OnError(code int, describe string) bool {
+func (transaction *sybilTransaction) OnError(handle Handle, src *net.UDPAddr, code int, describe string) bool {
 	return true
 }
 
-func (transaction *sybilTransaction) OnResponse(handle Handle,
-	nd *Node, resp map[string]interface{}) bool {
+func (transaction *sybilTransaction) OnResponse(handle Handle, src *net.UDPAddr, resp bencode.RawMessage) bool {
 
-	transaction.filter.AddNode(nd)
+	var r Response
 
-	if nds, ok := resp["nodes"]; ok {
-		nodes, err := unpackNodes(nds.(string))
-		if err != nil {
-			// TODO: handle error
-		}
+	err := bencode.Unmarshal(resp, &r)
+	if err != nil {
+		return true
+	}
 
-		target := transaction.Target()
-		for _, nd := range nodes {
-			if transaction.filter.Check(nd) {
-				transaction.findTargetNode(handle, target, nd)
-			}
+	transaction.filter.AddNode(&Node{src, r.NodeID})
+
+	target := transaction.Target()
+	for _, nd := range *r.Nodes {
+		if transaction.filter.Check(nd) {
+			transaction.findTargetNode(handle, target, nd)
 		}
 	}
+
 	return true
 }
 
-func (transaction *sybilTransaction) OnQuery(handle Handle,
-	nd *Node, transactionID string, q string, args map[string]interface{}) {
+func (transaction *sybilTransaction) OnQuery(handle Handle, src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) {
 
+	nd := &Node{Addr: src}
 	switch q {
-	case "ping":
-		handle.SendMessage(nd, makeResponse(transactionID, map[string]interface{}{
-			"id": makeID(nd.ID, handle.NodeID()),
-		}))
+	default:
+	case "q":
+		var a PingArgs
+		err := bencode.Unmarshal(args, &a)
+		if err != nil {
+			return
+		}
+
+		r, err := MakeResponse(transactionID, &Response{
+			NodeID: makeID(a.NodeID, handle.NodeID()),
+		})
+		if err != nil {
+			return
+		}
+
+		nd.ID = a.NodeID
+		handle.SendMessage(src, r)
 	case "find_node":
 	case "get_peers":
-		handle.SendMessage(nd, makeResponse(transactionID, map[string]interface{}{
-			"id":    makeID(nd.ID, handle.NodeID()),
-			"token": tools.RandomString(20),
-			"nodes": "",
-		}))
-	case "announce_peer":
-		infoHash := args["info_hash"].(string)
-		port := int(args["port"].(int64))
-		if transaction.crawCallback != nil {
-			defer transaction.crawCallback(infoHash, nd.Addr.IP, port)
+		var a GetPeersArgs
+		err := bencode.Unmarshal(args, &a)
+		if err != nil {
+			return
 		}
-		handle.SendMessage(nd, makeResponse(transactionID, map[string]interface{}{
-			"id": makeID(nd.ID, handle.NodeID()),
-		}))
-	default:
+
+		nodes := NodePtrSlice(nil)
+		r, err := MakeResponse(transactionID, &Response{
+			NodeID: makeID(a.NodeID, handle.NodeID()),
+			Token: tools.RandomString(20),
+			Nodes: &nodes,
+		})
+
+		nd.ID = a.NodeID
+		handle.SendMessage(src, r)
+	case "announce_peer":
+		var a AnnouncePeerArgs
+		err := bencode.Unmarshal(args, &a)
+		if err != nil {
+			return
+		}
+
+		if transaction.crawCallback != nil {
+			defer transaction.crawCallback(a.InfoHash, src.IP, a.Port)
+		}
+
+		r, err := MakeResponse(transactionID, &Response{
+			NodeID: makeID(a.NodeID, handle.NodeID()),
+		})
+
+		nd.ID = a.NodeID
+		handle.SendMessage(src, r)
 	}
 
 	if transaction.filter.Check(nd) {
@@ -237,16 +268,16 @@ func (transaction *sybilTransaction) OnFinish(handle Handle) {
 
 func (transaction *sybilTransaction) findTargetNode(handle Handle, target string, nodes ...*Node) {
 	for _, nd := range nodes {
-		msg, err := makeQuery("find_node", transaction.id, map[string]interface{}{
-			"target": target,
-			"id":     makeID(nd.ID, handle.NodeID()),
+		msg, err := MakeQuery(transaction.id, &FindNodeArgs{
+			Target: target,
+			NodeID: makeID(nd.ID, handle.NodeID()),
 		})
 		if err != nil {
 			// TODO: handle error
 			continue
 		}
 
-		handle.SendMessage(nd, msg)
+		handle.SendMessage(nd.Addr, msg)
 	}
 }
 

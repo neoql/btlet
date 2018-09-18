@@ -2,6 +2,7 @@ package tools
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"net"
 )
@@ -50,4 +51,19 @@ func DecodeCompactIPPortInfo(info string) (ip net.IP, port int, err error) {
 	ip = net.IPv4(info[0], info[1], info[2], info[3])
 	port = int((uint16(info[4]) << 8) | uint16(info[5]))
 	return
+}
+
+// EncodeCompactIPPortInfo encodes an ip and a port number to
+// compactIP-address/port info.
+func EncodeCompactIPPortInfo(ip net.IP, port int) (info string, err error) {
+	if port > 65535 || port < 0 {
+		err = errors.New("port should be no greater than 65535 and no less than 0")
+		return
+	}
+
+	buf := make([]byte, 6)
+	copy(buf, ip)
+	binary.BigEndian.PutUint16(buf[4:], uint16(port))
+
+	return string(buf), nil
 }

@@ -3,14 +3,17 @@ package dht
 import (
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
+
+	"github.com/neoql/btlet/bencode"
 )
 
 // Handle used for operate dht.
 type Handle interface {
 	NodeID() string
-	SendMessage(nd *Node, msg map[string]interface{}) error
+	SendMessage(dst *net.UDPAddr, msg interface{}) error
 }
 
 // Transaction is KRPC transaction.
@@ -20,8 +23,8 @@ type Transaction interface {
 
 	OnLaunch(handle Handle)
 	OnFinish(handle Handle)
-	OnResponse(handle Handle, nd *Node, resp map[string]interface{}) bool
-	OnError(code int, describe string) bool
+	OnResponse(handle Handle, src *net.UDPAddr, resp bencode.RawMessage) bool
+	OnError(handle Handle, src *net.UDPAddr, code int, describe string) bool
 	OnTimeout(handle Handle) bool
 }
 
@@ -115,12 +118,12 @@ func (dispatcher *TransactionDispatcher) mkRemoveSelf(t Transaction) func() {
 }
 
 // DisposeResponse dispose response.
-func (dispatcher *TransactionDispatcher) DisposeResponse(transactionID string, nd *Node, resp map[string]interface{}) {
+func (dispatcher *TransactionDispatcher) DisposeResponse(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) {
 	v, ok := dispatcher.transactions.Load(transactionID)
 	if ok {
 		box := v.(*transactionBox)
 		box.keepAlive()
-		if !box.transaction.OnResponse(dispatcher.handle, nd, resp) {
+		if !box.transaction.OnResponse(dispatcher.handle, src, resp) {
 			box.done()
 		}
 	}
@@ -128,52 +131,167 @@ func (dispatcher *TransactionDispatcher) DisposeResponse(transactionID string, n
 }
 
 // DisposeError dispose error
-func (dispatcher *TransactionDispatcher) DisposeError(transactionID string, code int, describe string) {
+func (dispatcher *TransactionDispatcher) DisposeError(src *net.UDPAddr, transactionID string, code int, describe string) {
 	v, ok := dispatcher.transactions.Load(transactionID)
 	if ok {
 		box := v.(*transactionBox)
 		box.keepAlive()
-		if !box.transaction.OnError(code, describe) {
+		if !box.transaction.OnError(dispatcher.handle, src, code, describe) {
 			box.done()
 		}
 	}
 	return
 }
 
-func makeQuery(q string, transactionID string,
-	args map[string]interface{}) (map[string]interface{}, error) {
-
-	if q != "ping" && q != "find_node" &&
-		q != "get_peers" && q != "announce_peer" {
-		return nil, fmt.Errorf("Wrong query type '%s'", q)
-	}
-
-	ret := map[string]interface{}{
-		"t": transactionID,
-		"y": "q",
-		"q": q,
-		"a": args,
-	}
-
-	return ret, nil
+// Message is KRPC message
+type Message struct {
+	TransactionID string             `bencode:"t"`
+	Y             string             `bencode:"y"`
+	Q             string             `bencode:"q,omitempty"`
+	Args          bencode.RawMessage `bencode:"a,omitempty"`
+	Resp          bencode.RawMessage `bencode:"r,omitempty"`
+	Err           *KRPCErr           `bencode:"e,omitempty"`
 }
 
-func makeResponse(transactionID string,
-	resp map[string]interface{}) map[string]interface{} {
-
-	ret := map[string]interface{}{
-		"t": transactionID,
-		"y": "r",
-		"r": resp,
-	}
-	return ret
+// PingArgs is ping query "a" field
+type PingArgs struct {
+	NodeID string `bencode:"id"`
 }
 
-func makeError(transactionID string, code int, msg string) map[string]interface{} {
-	ret := map[string]interface{}{
-		"t": transactionID,
-		"y": "e",
-		"e": []interface{}{code, msg},
+// FindNodeArgs is find_node query "a" field
+type FindNodeArgs struct {
+	NodeID string `bencode:"id"`
+	Target string `bencode:"target"`
+}
+
+// GetPeersArgs is get_peers query "a" field
+type GetPeersArgs struct {
+	NodeID   string `bencode:"id"`
+	InfoHash string `bencode:"info_hash"`
+}
+
+// AnnouncePeerArgs is announce_peer query "a" field
+type AnnouncePeerArgs struct {
+	NodeID   string `bencode:"id"`
+	InfoHash string `bencode:"info_hash"`
+	Port     int    `bencode:"port"`
+	Token    string `bencode:"token"`
+}
+
+// Response is reponse "r" field
+type Response struct {
+	NodeID string        `bencode:"id"`
+	Nodes  *NodePtrSlice `bencode:"nodes,omitempty"`
+	Token  string        `bencode:"token,omitempty"`
+	Values []string      `bencode:"values,omitempty"`
+}
+
+// KRPCErr is krpc errors
+type KRPCErr struct {
+	code     int
+	describe string
+}
+
+func (kerr *KRPCErr) Error() string {
+	return fmt.Sprintf("KRPC error: (%d)%s", kerr.code, kerr.describe)
+}
+
+// Code returns code
+func (kerr *KRPCErr) Code() int {
+	return kerr.code
+}
+
+// Describe returns describe
+func (kerr *KRPCErr) Describe() string {
+	return kerr.describe
+}
+
+// UnmarshalBencode implements bencode.Unmarshaler
+func (kerr *KRPCErr) UnmarshalBencode(b []byte) error {
+	var e []interface{}
+	err := bencode.Unmarshal(b, &e)
+	if err != nil {
+		return err
 	}
-	return ret
+
+	if len(e) < 2 {
+		return &KRPCErr{203, "Irregular package"}
+	}
+
+	var ok bool
+	var code int64
+
+	code, ok = e[0].(int64)
+	kerr.code = int(code)
+	kerr.describe, ok = e[1].(string)
+
+	if !ok {
+		return &KRPCErr{203, "Irregular package"}
+	}
+
+	return nil
+}
+
+// MarshalBencode implements bencode.Marshaler
+func (kerr KRPCErr) MarshalBencode() ([]byte, error) {
+	e := []interface{}{kerr.code, kerr.describe}
+	return bencode.Marshal(e)
+}
+
+// MakeQuery make a krpc query Message
+func MakeQuery(transactionID string, args interface{}) (*Message, error) {
+	var q string
+
+	switch args.(type) {
+	default:
+		return nil, errors.New("Unknown args type")
+	case *PingArgs, PingArgs:
+		q = "ping"
+	case *FindNodeArgs, FindNodeArgs:
+		q = "find_node"
+	case *GetPeersArgs, GetPeersArgs:
+		q = "get_peers"
+	case *AnnouncePeerArgs, AnnouncePeerArgs:
+		q = "announce_peer"
+	}
+
+	return MakeQueryEx(q, transactionID, args)
+}
+
+// MakeQueryEx can make query optional q
+func MakeQueryEx(q string, transactionID string, args interface{}) (*Message, error) {
+	a, err := bencode.Marshal(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Message{
+		TransactionID: transactionID,
+		Y:             "q",
+		Q:             q,
+		Args:          a,
+	}, nil
+}
+
+// MakeResponse make a krpc resp Message
+func MakeResponse(transactionID string, resp interface{}) (*Message, error) {
+	r, err := bencode.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Message{
+		TransactionID: transactionID,
+		Y:             "r",
+		Resp:          r,
+	}, nil
+}
+
+// MakeError make a krpc error Message
+func MakeError(transactionID string, err *KRPCErr) (*Message, error) {
+	return &Message{
+		TransactionID: transactionID,
+		Y:             "e",
+		Err:           err,
+	}, nil
 }
