@@ -45,7 +45,7 @@ type SnifferBuilder struct {
 func NewSnifferBuilder() *SnifferBuilder {
 	return &SnifferBuilder{
 		IP:   "0.0.0.0",
-		Port: 6881,
+		Port: 7878,
 		Mode: SybilMode,
 	}
 }

@@ -169,7 +169,7 @@ func (transaction *sybilTransaction) OnResponse(handle Handle, src *net.UDPAddr,
 	var r Response
 
 	err := bencode.Unmarshal(resp, &r)
-	if err != nil {
+	if err != nil || r.Nodes == nil {
 		return true
 	}
 
@@ -190,7 +190,7 @@ func (transaction *sybilTransaction) OnQuery(handle Handle, src *net.UDPAddr, tr
 	nd := &Node{Addr: src}
 	switch q {
 	default:
-	case "q":
+	case "ping":
 		var a PingArgs
 		err := bencode.Unmarshal(args, &a)
 		if err != nil {
