@@ -220,6 +220,9 @@ func (transaction *sybilTransaction) OnQuery(handle Handle, src *net.UDPAddr, tr
 			Token: tools.RandomString(20),
 			Nodes: &nodes,
 		})
+		if err != nil {
+			return
+		}
 
 		nd.ID = a.NodeID
 		handle.SendMessage(src, r)
@@ -237,6 +240,9 @@ func (transaction *sybilTransaction) OnQuery(handle Handle, src *net.UDPAddr, tr
 		r, err := MakeResponse(transactionID, &Response{
 			NodeID: makeID(a.NodeID, handle.NodeID()),
 		})
+		if err != nil {
+			return
+		}
 
 		nd.ID = a.NodeID
 		handle.SendMessage(src, r)
