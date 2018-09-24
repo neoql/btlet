@@ -49,3 +49,26 @@ func (r *StreamReader) ReadBytes(delim int64) ([]byte, error) {
 	}
 	return w.Bytes(), nil
 }
+
+// StreamWriter is stream writer
+type StreamWriter struct {
+	conn    net.Conn
+	timeout time.Duration
+}
+
+// NewStreamWriter returns a new Writer.
+func NewStreamWriter(conn net.Conn, timeout time.Duration) *StreamWriter {
+	return &StreamWriter{
+		conn:    conn,
+		timeout: timeout,
+	}
+}
+
+func (w *StreamWriter) Write(b []byte) (int, error) {
+	err := w.conn.SetWriteDeadline(time.Now().Add(w.timeout))
+	if err != nil {
+		return 0, err
+	}
+
+	return w.conn.Write(b)
+}

@@ -77,7 +77,7 @@ loop:
 			break loop
 		default:
 		}
-		
+	
 		n, addr, err := core.conn.ReadFromUDP(buf)
 		if err != nil {
 			// TODO: handle error

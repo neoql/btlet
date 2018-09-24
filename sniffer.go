@@ -3,10 +3,13 @@ package btlet
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"time"
 
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
+	"github.com/neoql/btlet/tools"
 )
 
 // Pipeline is used for handle meta
@@ -57,8 +60,10 @@ func (builder *SnifferBuilder) NewSniffer(p Pipeline) *Sniffer {
 
 // Sniffer can crawl Meta from dht.
 type Sniffer struct {
-	crawler  dht.Crawler
-	pipeline Pipeline
+	crawler   dht.Crawler
+	pipeline  Pipeline
+	ctx       context.Context
+	extCenter *bt.ExtCenter
 }
 
 // NewSniffer returns a Sniffer
@@ -71,15 +76,85 @@ func NewSniffer(c dht.Crawler, p Pipeline) *Sniffer {
 
 // Sniff starts sniff meta
 func (sniffer *Sniffer) Sniff(ctx context.Context) error {
-	return sniffer.crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
-		defer recover()
-		address := fmt.Sprintf("%s:%d", ip, port)
-		meta, err := bt.FetchMetadata(infoHash, address)
-		if err != nil {
-			return
-		}
-		if sniffer.pipeline != nil {
-			sniffer.pipeline.DisposeMeta(infoHash, meta)
-		}
+	sniffer.ctx = ctx
+
+	// regist extesions
+	sniffer.extCenter = bt.NewExtCenter()
+	sniffer.extCenter.RegistExt(bt.GenFetchMetaExt)
+
+	return sniffer.crawler.Crawl(ctx, sniffer.afterCrawl)
+}
+
+func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
+	// connect to peer
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), time.Second*15)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	session := bt.NewSession(conn)
+
+	// handshake
+	var reserved uint64
+	sniffer.extCenter.SetReservedBit(&reserved)
+	opt, err := session.Handshake(&bt.HSOption{
+		Reserved: reserved,
+		InfoHash: infoHash,
+		PeerID:   tools.RandomString(20),
 	})
+
+	if err != nil {
+		return
+	}
+
+	// peer send different info_hash
+	if opt.InfoHash != infoHash {
+		return 
+	}
+
+	esession := sniffer.extCenter.NewExtSession(opt)
+	if esession == nil {
+		// not support extensions
+		return
+	}
+
+	mtCh := make(chan bt.RawMeta)
+	exit := make(chan bool, 1)
+
+	esession.RangeExts(func(ext bt.Extension) bool {
+		switch e := ext.(type) {
+		case *bt.FetchMetaExt:
+			e.Ch = mtCh
+		default:
+		}
+		return true
+	})
+
+	// send extension handshake.(only send, have not recieve)
+	err = esession.SendHS(session.MessageSender())
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(sniffer.ctx)
+	defer cancel()
+	go func() {
+		err := session.Loop(ctx, func(id byte, r io.Reader, sender *bt.MessageSender) error {
+			if id != bt.ExtID {
+				return nil
+			}
+			return esession.HandleMessage(r, sender)
+		})
+
+		exit <- (err == nil)
+	}()
+
+	select {
+	case rawmeta := <-mtCh:
+		if sniffer.pipeline != nil {
+			sniffer.pipeline.DisposeMeta(infoHash, rawmeta)
+		}
+	case <-exit:
+	}
 }

@@ -2,7 +2,6 @@ package bt
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"errors"
 	"net"
 	"strings"
@@ -15,12 +14,6 @@ import (
 const (
 	// utMetadata is th ui_metadata id
 	utMetadata = 2
-)
-
-const (
-	request = iota
-	data
-	reject
 )
 
 // RawMeta is raw metadata
@@ -165,20 +158,6 @@ func FetchMetadata(infoHash string, address string) (meta RawMeta, err error) {
 		default:
 		}
 	}
-}
-
-func checkMetadata(metadata []byte, infoHash string) bool {
-	hash := sha1.Sum(metadata)
-	return bytes.Equal(hash[:], []byte(infoHash))
-}
-
-func checkPiecesDone(pieces [][]byte) bool {
-	for _, piece := range pieces {
-		if len(piece) == 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func reqMetadataPieces(conn net.Conn, ut byte, size int) int {
