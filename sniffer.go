@@ -152,7 +152,7 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 
 	select {
 	case rawmeta := <-mtCh:
-		if sniffer.pipeline != nil {
+		if sniffer.pipeline != nil && rawmeta != nil {
 			sniffer.pipeline.DisposeMeta(infoHash, rawmeta)
 		}
 	case <-exit:

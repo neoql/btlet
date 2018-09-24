@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"errors"
 	"io"
-
 	"github.com/neoql/btlet/bencode"
 )
 
@@ -88,8 +87,16 @@ func (fm *FetchMetaExt) Unsupport() {
 func (fm *FetchMetaExt) HandleMessage(r io.Reader, sender *ExtMsgSender) error {
 	var msg map[string]int
 
-	dec := bencode.NewDecoder(r)
-	err := dec.Decode(&msg)
+	buf := bytes.NewBuffer(make([]byte, 0, r.(*io.LimitedReader).N))
+
+	_, err := io.Copy(buf, r)
+	if err != nil {
+		return err
+	}
+
+	raw := buf.Bytes()
+	dec := bencode.NewDecoder(bytes.NewReader(raw))
+	err = dec.Decode(&msg)
 	if err != nil {
 		return err
 	}
@@ -100,19 +107,8 @@ func (fm *FetchMetaExt) HandleMessage(r io.Reader, sender *ExtMsgSender) error {
 		return errors.New("peer reject out request")
 	case data:
 		no := msg["piece"]
-		var piece []byte
-		if no != len(fm.pieces)-1 {
-			piece = make([]byte, maxPieceSize)
-		} else {
-			piece = make([]byte, msg["total_size"]%maxPieceSize)
-		}
-
-		buf := bytes.NewBuffer(piece)
-		_, err := io.Copy(buf, r)
-		if err != nil {
-			return err
-		}
-		fm.pieces[no] = buf.Bytes()
+	
+		fm.pieces[no] = raw[dec.BytesParsed():]
 
 		if checkPiecesDone(fm.pieces) {
 			metadata := bytes.Join(fm.pieces, nil)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"fmt"
 
 	"github.com/neoql/btlet/bencode"
 )
@@ -84,9 +85,9 @@ func (es *ExtSession) SendHS(sender *MessageSender) error {
 	putter := ExtHSPutter{hs}
 	for i, ext := range es.exts {
 		ext.BeforeHandshake(putter)
-		m[ext.MapKey()] = i
+		m[ext.MapKey()] = i + 1
 	}
-	hs["m"] = hs
+	hs["m"] = m
 	b, err := bencode.Marshal(hs)
 	if err != nil {
 		return err
@@ -153,7 +154,11 @@ func (es *ExtSession) HandleMessage(r io.Reader, sender *MessageSender) error {
 		return errors.New("have not handshake")
 	}
 
-	ext := es.exts[id]
+	if int(id) > len(es.exts) {
+		return fmt.Errorf("unkown extension message id:%d", id)
+	}
+
+	ext := es.exts[id-1]
 	if ext == nil {
 		return errors.New("unsupport extension message id")
 	}
