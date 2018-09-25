@@ -56,24 +56,22 @@ func (fm *FetchMetaExt) AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) err
 	piecesNum := getPiecesNum(size)
 	fm.pieces = make([][]byte, piecesNum)
 
-	go func() {
-		for i := 0; i < piecesNum; i++ {
-			m := map[string]int{
-				"msg_type": request,
-				"piece":    i,
-			}
-
-			b, err := bencode.Marshal(m)
-			if err != nil {
-				return
-			}
-
-			err = sender.SendBytes(b)
-			if err != nil {
-				return
-			}
+	for i := 0; i < piecesNum; i++ {
+		m := map[string]int{
+			"msg_type": request,
+			"piece":    i,
 		}
-	}()
+
+		b, err := bencode.Marshal(m)
+		if err != nil {
+			return err
+		}
+
+		err = sender.SendBytes(b)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -87,7 +85,7 @@ func (fm *FetchMetaExt) Unsupport() {
 func (fm *FetchMetaExt) HandleMessage(r io.Reader, sender *ExtMsgSender) error {
 	var msg map[string]int
 
-	buf := bytes.NewBuffer(make([]byte, 0, r.(*io.LimitedReader).N))
+	buf := &bytes.Buffer{}
 
 	_, err := io.Copy(buf, r)
 	if err != nil {
