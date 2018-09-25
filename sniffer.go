@@ -63,7 +63,6 @@ type Sniffer struct {
 	crawler   dht.Crawler
 	pipeline  Pipeline
 	ctx       context.Context
-	extCenter *bt.ExtCenter
 }
 
 // NewSniffer returns a Sniffer
@@ -77,11 +76,6 @@ func NewSniffer(c dht.Crawler, p Pipeline) *Sniffer {
 // Sniff starts sniff meta
 func (sniffer *Sniffer) Sniff(ctx context.Context) error {
 	sniffer.ctx = ctx
-
-	// regist extesions
-	sniffer.extCenter = bt.NewExtCenter()
-	sniffer.extCenter.RegistExt(bt.GenFetchMetaExt)
-
 	return sniffer.crawler.Crawl(ctx, sniffer.afterCrawl)
 }
 
@@ -97,7 +91,7 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 
 	// handshake
 	var reserved uint64
-	sniffer.extCenter.SetReservedBit(&reserved)
+	bt.SetExtReserved(&reserved)
 	opt, err := session.Handshake(&bt.HSOption{
 		Reserved: reserved,
 		InfoHash: infoHash,
@@ -113,23 +107,13 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 		return 
 	}
 
-	esession := sniffer.extCenter.NewExtSession(opt)
-	if esession == nil {
+	if !bt.CheckExtReserved(opt.Reserved) {
 		// not support extensions
 		return
 	}
 
-	mtCh := make(chan bt.RawMeta)
-	exit := make(chan bool, 1)
-
-	esession.RangeExts(func(ext bt.Extension) bool {
-		switch e := ext.(type) {
-		case *bt.FetchMetaExt:
-			e.Ch = mtCh
-		default:
-		}
-		return true
-	})
+	fmext := bt.NewFetchMetaExt(*opt)
+	esession := bt.NewExtSession([]bt.Extension{fmext})
 
 	// send extension handshake.(only send, have not recieve)
 	err = esession.SendHS(session.MessageSender())
@@ -139,22 +123,29 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 
 	ctx, cancel := context.WithCancel(sniffer.ctx)
 	defer cancel()
-	go func() {
-		err := session.Loop(ctx, func(id byte, r io.Reader, sender *bt.MessageSender) error {
-			if id != bt.ExtID {
-				return nil
-			}
-			return esession.HandleMessage(r, sender)
-		})
 
-		exit <- (err == nil)
-	}()
-
-	select {
-	case rawmeta := <-mtCh:
-		if sniffer.pipeline != nil && rawmeta != nil {
-			sniffer.pipeline.DisposeMeta(infoHash, rawmeta)
+	session.Loop(ctx, func(id byte, r io.Reader, sender *bt.MessageSender) error {
+		if id != bt.ExtID {
+			return nil
 		}
-	case <-exit:
-	}
+
+		err := esession.HandleMessage(r, sender)
+		if err != nil {
+			return err
+		}
+
+		if !fmext.IsSupoort() {
+			cancel()
+		}
+
+		if fmext.CheckDone() {
+			raw, err := fmext.FetchRawMeta()
+			if err == nil && sniffer.pipeline != nil {
+				sniffer.pipeline.DisposeMeta(infoHash, raw)
+			}
+			cancel()
+		}
+
+		return nil
+	})
 }

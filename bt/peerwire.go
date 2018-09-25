@@ -127,7 +127,13 @@ func (s *Session) Handshake(opt *HSOption) (*HSOption, error) {
 }
 
 // Loop read message and prossess it with assign MessageHandler
-func (s *Session) Loop(ctx context.Context, f MessageHandleFunc) error {
+func (s *Session) Loop(ctx context.Context, f MessageHandleFunc) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = e.(error)
+		}
+	}()
+
 	var length uint32
 	var tmp [1]byte
 
@@ -149,16 +155,8 @@ loop:
 			return err
 		}
 
-		err = func() (err error) {
-			defer func() {
-				if e := recover(); e != nil {
-					err = e.(error)
-				}
-			}()
 
-			return f(tmp[0], io.LimitReader(s.r, int64(length-1)), s.sender)
-		}()
-
+		err = f(tmp[0], io.LimitReader(s.r, int64(length-1)), s.sender)
 		if err != nil {
 			return err
 		}

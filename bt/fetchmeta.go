@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"errors"
 	"io"
+
 	"github.com/neoql/btlet/bencode"
 )
 
@@ -22,7 +23,7 @@ const (
 type FetchMetaExt struct {
 	infoHash string
 	pieces   [][]byte
-	Ch       chan RawMeta
+	support  bool
 }
 
 // NewFetchMetaExt returns a new FetchMetaExt
@@ -32,14 +33,15 @@ func NewFetchMetaExt(opt HSOption) *FetchMetaExt {
 	}
 }
 
-// GenFetchMetaExt Create a FetchMetaExt
-func GenFetchMetaExt(opt HSOption) Extension {
-	return NewFetchMetaExt(opt)
-}
-
 // MapKey implements Extension.MapKey
 func (fm *FetchMetaExt) MapKey() string {
 	return "ut_metadata"
+}
+
+// IsSupoort returns true if peer support this extension other false.
+// Should use it after extesion handshake
+func (fm *FetchMetaExt) IsSupoort() bool {
+	return fm.support
 }
 
 // BeforeHandshake implements Extension.BeforeHandshake
@@ -47,6 +49,7 @@ func (fm *FetchMetaExt) BeforeHandshake(hs ExtHSPutter) {}
 
 // AfterHandshake implements Extension.AfterHandshake
 func (fm *FetchMetaExt) AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) error {
+	fm.support = true
 	var size int64
 	ok := hs.Get("metadata_size", &size)
 	if !ok {
@@ -56,29 +59,31 @@ func (fm *FetchMetaExt) AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) err
 	piecesNum := getPiecesNum(size)
 	fm.pieces = make([][]byte, piecesNum)
 
-	for i := 0; i < piecesNum; i++ {
-		m := map[string]int{
-			"msg_type": request,
-			"piece":    i,
+	go func() {
+		for i := 0; i < piecesNum; i++ {
+			m := map[string]int{
+				"msg_type": request,
+				"piece":    i,
+			}
+	
+			b, err := bencode.Marshal(m)
+			if err != nil {
+				return
+			}
+	
+			err = sender.SendBytes(b)
+			if err != nil {
+				return
+			}
 		}
-
-		b, err := bencode.Marshal(m)
-		if err != nil {
-			return err
-		}
-
-		err = sender.SendBytes(b)
-		if err != nil {
-			return err
-		}
-	}
+	}()
 
 	return nil
 }
 
 // Unsupport implements Extension.Unsupport
 func (fm *FetchMetaExt) Unsupport() {
-	fm.Ch <- nil
+	fm.support = false
 }
 
 // HandleMessage implements Extension.HandleMessage
@@ -105,20 +110,32 @@ func (fm *FetchMetaExt) HandleMessage(r io.Reader, sender *ExtMsgSender) error {
 		return errors.New("peer reject out request")
 	case data:
 		no := msg["piece"]
-	
-		fm.pieces[no] = raw[dec.BytesParsed():]
 
-		if checkPiecesDone(fm.pieces) {
-			metadata := bytes.Join(fm.pieces, nil)
-			if checkMetadata(metadata, fm.infoHash) {
-				fm.Ch <- metadata
-			} else {
-				fm.Ch <- nil
-			}
-		}
+		fm.pieces[no] = raw[dec.BytesParsed():]
 	}
 
 	return nil
+}
+
+// CheckDone if download all pieces returns true else false
+func (fm *FetchMetaExt) CheckDone() bool {
+	for _, piece := range fm.pieces {
+		if len(piece) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// FetchRawMeta get the raw metadata
+func (fm *FetchMetaExt) FetchRawMeta() (RawMeta, error) {
+	metadata := bytes.Join(fm.pieces, nil)
+	hash := sha1.Sum(metadata)
+	if bytes.Equal(hash[:], []byte(fm.infoHash)) {
+		return metadata, nil
+	}
+
+	return nil, errors.New("metadata's sha1 hash is different from info_hash")
 }
 
 func getPiecesNum(size int64) int {
@@ -128,18 +145,4 @@ func getPiecesNum(size int64) int {
 	}
 
 	return int(piecesNum)
-}
-
-func checkPiecesDone(pieces [][]byte) bool {
-	for _, piece := range pieces {
-		if len(piece) == 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func checkMetadata(metadata []byte, infoHash string) bool {
-	hash := sha1.Sum(metadata)
-	return bytes.Equal(hash[:], []byte(infoHash))
 }
