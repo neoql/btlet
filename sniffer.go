@@ -1,12 +1,15 @@
 package btlet
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha1"
 	"fmt"
-	"io"
 	"net"
 	"time"
+	"os"
 
+	"github.com/neoql/btlet/bencode"
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
 	"github.com/neoql/btlet/tools"
@@ -60,9 +63,9 @@ func (builder *SnifferBuilder) NewSniffer(p Pipeline) *Sniffer {
 
 // Sniffer can crawl Meta from dht.
 type Sniffer struct {
-	crawler   dht.Crawler
-	pipeline  Pipeline
-	ctx       context.Context
+	crawler  dht.Crawler
+	pipeline Pipeline
+	ctx      context.Context
 }
 
 // NewSniffer returns a Sniffer
@@ -80,6 +83,7 @@ func (sniffer *Sniffer) Sniff(ctx context.Context) error {
 }
 
 func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
+	defer recover()
 	// connect to peer
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), time.Second*15)
 	if err != nil {
@@ -104,7 +108,7 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 
 	// peer send different info_hash
 	if opt.InfoHash != infoHash {
-		return 
+		return
 	}
 
 	if !bt.CheckExtReserved(opt.Reserved) {
@@ -112,40 +116,120 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 		return
 	}
 
-	fmext := bt.NewFetchMetaExt(*opt)
-	esession := bt.NewExtSession([]bt.Extension{fmext})
+	sender := session.MessageSender()
+	extHs := map[string]interface{}{
+		"m": map[string]int{"ut_metadata": 1},
+	}
 
-	// send extension handshake.(only send, have not recieve)
-	err = esession.SendHS(session.MessageSender())
+	raw, _ := bencode.Marshal(extHs)
+	msg := bytes.Join([][]byte{[]byte{0}, raw}, nil)
+	err = sender.SendShortMessage(bt.ExtID, msg)
 	if err != nil {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(sniffer.ctx)
-	defer cancel()
+	var pieces [][]byte
 
-	session.Loop(ctx, func(id byte, r io.Reader, sender *bt.MessageSender) error {
-		if id != bt.ExtID {
-			return nil
-		}
-
-		err := esession.HandleMessage(r, sender)
+loop:
+	for {
+		payload, err := session.NextPayload()
 		if err != nil {
-			return err
+			return
 		}
 
-		if !fmext.IsSupoort() {
-			cancel()
+		if len(payload) == 0 || payload[0] != bt.ExtID {
+			continue
 		}
 
-		if fmext.CheckDone() {
-			raw, err := fmext.FetchRawMeta()
-			if err == nil && sniffer.pipeline != nil {
-				sniffer.pipeline.DisposeMeta(infoHash, raw)
+		if payload[1] == 0 {
+			var msg map[string]bencode.RawMessage
+
+			err := bencode.Unmarshal(payload[2:], &msg)
+			if err != nil {
+				return
 			}
-			cancel()
-		}
 
-		return nil
-	})
+			var m map[string]byte
+			err = bencode.Unmarshal(msg["m"], &m)
+			if err != nil {
+				return
+			}
+
+			var size int64
+			_, ok := msg["metadata_size"]
+			if !ok {
+				return
+			}
+			err = bencode.Unmarshal(msg["metadata_size"], &size)
+			if err != nil {
+				return
+			}
+
+			id := m["ut_metadata"]
+
+			piecesNum := size / (16 * 1024)
+			if size%(16*1024) != 0 {
+				piecesNum++
+			}
+
+			go func() {
+				for i := 0; i < int(piecesNum); i++ {
+					content, _ := bencode.Marshal(map[string]int{
+						"msg_type": 0,
+						"piece":    i,
+					})
+					err := sender.SendShortMessage(bt.ExtID, bytes.Join([][]byte{[]byte{id}, content}, nil))
+					if err != nil {
+						return
+					}
+				}
+			}()
+			os.Stderr.WriteString(fmt.Sprintln(piecesNum))
+			if piecesNum < 0 {
+				return
+			}
+			pieces = make([][]byte, piecesNum)
+		} else {
+			if pieces == nil {
+				return
+			}
+
+			var msg map[string]int
+			content := payload[2:]
+			dec := bencode.NewDecoder(bytes.NewReader(content))
+			err := dec.Decode(&msg)
+			if err != nil {
+				return
+			}
+
+			if msg["msg_type"] != 1 {
+				continue
+			}
+
+			excess := content[dec.BytesParsed():]
+			pieces[msg["piece"]] = excess
+
+			if checkPiecesDone(pieces) {
+				metadata := bytes.Join(pieces, nil)
+				if checkMetadata(metadata, infoHash) && sniffer.pipeline != nil {
+					defer sniffer.pipeline.DisposeMeta(infoHash, metadata)
+					break loop
+				}
+			}
+		}
+	}
+}
+
+func checkMetadata(metadata []byte, infoHash string) bool {
+	hash := sha1.Sum(metadata)
+	return bytes.Equal(hash[:], []byte(infoHash))
+}
+
+func checkPiecesDone(pieces [][]byte) bool {
+	for _, piece := range pieces {
+		if len(piece) == 0 {
+			return false
+		}
+	}
+	return true
 }

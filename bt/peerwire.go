@@ -30,8 +30,7 @@ func (w omitWriter) Write(b []byte) (int, error) { return len(b), nil }
 
 // MessageSender can send message
 type MessageSender struct {
-	w   io.Writer
-	tmp [1]byte
+	w io.Writer
 }
 
 // SendMessage sends Message
@@ -41,8 +40,7 @@ func (ms *MessageSender) SendMessage(msg *Message) error {
 		return err
 	}
 
-	ms.tmp[0] = msg.ID
-	_, err = ms.w.Write(ms.tmp[:])
+	_, err = ms.w.Write([]byte{msg.ID})
 	if err != nil {
 		return err
 	}
@@ -57,7 +55,25 @@ func (ms *MessageSender) SendMessage(msg *Message) error {
 
 // SendShortMessage can send a short message
 func (ms *MessageSender) SendShortMessage(id byte, b []byte) error {
-	return ms.SendMessage(&Message{R: bytes.NewReader(b), ID: id, Len: uint32(len(b) + 1)})
+	var length uint32
+
+	length = uint32(len(b) + 1)
+	err := binary.Write(ms.w, binary.BigEndian, length)
+	if err != nil {
+		return nil
+	}
+
+	_, err = ms.w.Write([]byte{id})
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(ms.w, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // HSOption is handshake option
@@ -126,6 +142,20 @@ func (s *Session) Handshake(opt *HSOption) (*HSOption, error) {
 	return opt, nil
 }
 
+// NextPayload read next payload
+func (s *Session) NextPayload() ([]byte, error) {
+	var length uint32
+	err := binary.Read(s.r, binary.BigEndian, &length)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := bytes.NewBuffer(make([]byte, 0, length))
+
+	_, err = io.CopyN(buf, s.r, int64(length))
+	return buf.Bytes(), err
+}
+
 // Loop read message and prossess it with assign MessageHandler
 func (s *Session) Loop(ctx context.Context, f MessageHandleFunc) (err error) {
 	defer func() {
@@ -154,7 +184,6 @@ loop:
 		if err != nil {
 			return err
 		}
-
 
 		err = f(tmp[0], io.LimitReader(s.r, int64(length-1)), s.sender)
 		if err != nil {

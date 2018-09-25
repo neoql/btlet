@@ -11,7 +11,7 @@ import (
 
 const (
 	// ExtID is extension message id.
-	ExtID = 20
+	ExtID byte = 20
 	// ExtReserved is reserved field in handshake when peer wire
 	ExtReserved = 0x100000
 )
@@ -125,12 +125,12 @@ func (es *ExtSession) HandleMessage(r io.Reader, sender *MessageSender) error {
 			return err
 		}
 		var msg map[string]interface{}
-		err = bencode.Unmarshal(buf.Bytes(), &msg) 
+		err = bencode.Unmarshal(buf.Bytes(), &msg)
 		if err != nil {
 			return err
 		}
 		fmt.Println(msg)
-		
+
 		return fmt.Errorf("unkown extension message id:%d", id)
 	}
 
