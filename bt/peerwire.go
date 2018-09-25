@@ -2,7 +2,6 @@ package bt
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -17,13 +16,6 @@ const (
 	Protocol = "BitTorrent protocol"
 )
 
-// Message is message
-type Message struct {
-	R   io.Reader
-	ID  byte
-	Len uint32
-}
-
 type omitWriter struct{}
 
 func (w omitWriter) Write(b []byte) (int, error) { return len(b), nil }
@@ -33,31 +25,11 @@ type MessageSender struct {
 	w io.Writer
 }
 
-// SendMessage sends Message
-func (ms *MessageSender) SendMessage(msg *Message) error {
-	err := binary.Write(ms.w, binary.BigEndian, msg.Len)
-	if err != nil {
-		return err
-	}
-
-	_, err = ms.w.Write([]byte{msg.ID})
-	if err != nil {
-		return err
-	}
-
-	_, err = io.CopyN(ms.w, msg.R, int64(msg.Len)-1)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// SendShortMessage can send a short message
-func (ms *MessageSender) SendShortMessage(id byte, b []byte) error {
+// SendBytes can send a short message
+func (ms *MessageSender) SendBytes(id byte, payload []byte) error {
 	var length uint32
 
-	length = uint32(len(b) + 1)
+	length = uint32(len(payload) + 1)
 	err := binary.Write(ms.w, binary.BigEndian, length)
 	if err != nil {
 		return nil
@@ -68,7 +40,7 @@ func (ms *MessageSender) SendShortMessage(id byte, b []byte) error {
 		return err
 	}
 
-	_, err = io.Copy(ms.w, bytes.NewReader(b))
+	_, err = io.Copy(ms.w, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -142,8 +114,8 @@ func (s *Session) Handshake(opt *HSOption) (*HSOption, error) {
 	return opt, nil
 }
 
-// NextPayload read next payload
-func (s *Session) NextPayload() ([]byte, error) {
+// NextMessage read next message
+func (s *Session) NextMessage() ([]byte, error) {
 	var length uint32
 	err := binary.Read(s.r, binary.BigEndian, &length)
 	if err != nil {
@@ -154,42 +126,4 @@ func (s *Session) NextPayload() ([]byte, error) {
 
 	_, err = io.CopyN(buf, s.r, int64(length))
 	return buf.Bytes(), err
-}
-
-// Loop read message and prossess it with assign MessageHandler
-func (s *Session) Loop(ctx context.Context, f MessageHandleFunc) (err error) {
-	defer func() {
-		if e := recover(); e != nil {
-			err = e.(error)
-		}
-	}()
-
-	var length uint32
-	var tmp [1]byte
-
-loop:
-	for {
-		select {
-		case <-ctx.Done():
-			break loop
-		default:
-		}
-
-		err := binary.Read(s.r, binary.BigEndian, &length)
-		if err != nil {
-			return err
-		}
-
-		_, err = s.r.Read(tmp[:])
-		if err != nil {
-			return err
-		}
-
-		err = f(tmp[0], io.LimitReader(s.r, int64(length-1)), s.sender)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

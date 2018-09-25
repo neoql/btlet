@@ -1,15 +1,11 @@
 package btlet
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha1"
 	"fmt"
 	"net"
 	"time"
-	"os"
 
-	"github.com/neoql/btlet/bencode"
 	"github.com/neoql/btlet/bt"
 	"github.com/neoql/btlet/dht"
 	"github.com/neoql/btlet/tools"
@@ -117,119 +113,39 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 	}
 
 	sender := session.MessageSender()
-	extHs := map[string]interface{}{
-		"m": map[string]int{"ut_metadata": 1},
-	}
 
-	raw, _ := bencode.Marshal(extHs)
-	msg := bytes.Join([][]byte{[]byte{0}, raw}, nil)
-	err = sender.SendShortMessage(bt.ExtID, msg)
+	fmExt := bt.NewFetchMetaExt(infoHash)
+	center := bt.NewExtCenter()
+	center.RegistExt(fmExt)
+
+	err = center.SendHS(sender)
 	if err != nil {
 		return
 	}
 
-	var pieces [][]byte
-
-loop:
 	for {
-		payload, err := session.NextPayload()
+		message, err := session.NextMessage()
 		if err != nil {
+			// fmt.Println(err)
 			return
 		}
 
-		if len(payload) == 0 || payload[0] != bt.ExtID {
+		if len(message) == 0 || message[0] != bt.ExtID {
 			continue
 		}
 
-		if payload[1] == 0 {
-			var msg map[string]bencode.RawMessage
+		err = center.HandlePayload(message[1:], sender)
+		if err != nil {
+			// fmt.Println(err)
+			return
+		}
 
-			err := bencode.Unmarshal(payload[2:], &msg)
-			if err != nil {
-				return
+		if fmExt.CheckDone() {
+			meta, err := fmExt.FetchRawMeta()
+			if err == nil && sniffer.pipeline != nil {
+				sniffer.pipeline.DisposeMeta(infoHash, meta)
 			}
-
-			var m map[string]byte
-			err = bencode.Unmarshal(msg["m"], &m)
-			if err != nil {
-				return
-			}
-
-			var size int64
-			_, ok := msg["metadata_size"]
-			if !ok {
-				return
-			}
-			err = bencode.Unmarshal(msg["metadata_size"], &size)
-			if err != nil {
-				return
-			}
-
-			id := m["ut_metadata"]
-
-			piecesNum := size / (16 * 1024)
-			if size%(16*1024) != 0 {
-				piecesNum++
-			}
-
-			go func() {
-				for i := 0; i < int(piecesNum); i++ {
-					content, _ := bencode.Marshal(map[string]int{
-						"msg_type": 0,
-						"piece":    i,
-					})
-					err := sender.SendShortMessage(bt.ExtID, bytes.Join([][]byte{[]byte{id}, content}, nil))
-					if err != nil {
-						return
-					}
-				}
-			}()
-			os.Stderr.WriteString(fmt.Sprintln(piecesNum))
-			if piecesNum < 0 {
-				return
-			}
-			pieces = make([][]byte, piecesNum)
-		} else {
-			if pieces == nil {
-				return
-			}
-
-			var msg map[string]int
-			content := payload[2:]
-			dec := bencode.NewDecoder(bytes.NewReader(content))
-			err := dec.Decode(&msg)
-			if err != nil {
-				return
-			}
-
-			if msg["msg_type"] != 1 {
-				continue
-			}
-
-			excess := content[dec.BytesParsed():]
-			pieces[msg["piece"]] = excess
-
-			if checkPiecesDone(pieces) {
-				metadata := bytes.Join(pieces, nil)
-				if checkMetadata(metadata, infoHash) && sniffer.pipeline != nil {
-					defer sniffer.pipeline.DisposeMeta(infoHash, metadata)
-					break loop
-				}
-			}
+			break
 		}
 	}
-}
-
-func checkMetadata(metadata []byte, infoHash string) bool {
-	hash := sha1.Sum(metadata)
-	return bytes.Equal(hash[:], []byte(infoHash))
-}
-
-func checkPiecesDone(pieces [][]byte) bool {
-	for _, piece := range pieces {
-		if len(piece) == 0 {
-			return false
-		}
-	}
-	return true
 }

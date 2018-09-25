@@ -3,8 +3,6 @@ package bt
 import (
 	"bytes"
 	"errors"
-	"fmt"
-	"io"
 
 	"github.com/neoql/btlet/bencode"
 )
@@ -34,29 +32,33 @@ type Extension interface {
 	AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) error
 	// Unsupport will call after handshake if peer not support this extension.
 	Unsupport()
-	HandleMessage(r io.Reader, sender *ExtMsgSender) error
+	HandleMessage(content []byte, sender *ExtMsgSender) error
 }
 
-// ExtSession is extension session
-type ExtSession struct {
+// ExtCenter is extension center
+type ExtCenter struct {
 	exts []Extension
 	m    map[string]byte
 }
 
-// NewExtSession returns a new extension session
-func NewExtSession(exts []Extension) *ExtSession {
-	return &ExtSession{
-		exts: exts,
-		m:    make(map[string]byte),
+// NewExtCenter returns a new extension center
+func NewExtCenter() *ExtCenter {
+	return &ExtCenter{
+		m: make(map[string]byte),
 	}
 }
 
+// RegistExt regists extension into center
+func (ec *ExtCenter) RegistExt(ext Extension) {
+	ec.exts = append(ec.exts, ext)
+}
+
 // SendHS sends handshake
-func (es *ExtSession) SendHS(sender *MessageSender) error {
+func (ec *ExtCenter) SendHS(sender *MessageSender) error {
 	hs := make(map[string]interface{})
 	m := make(map[string]int)
 	putter := ExtHSPutter{hs}
-	for i, ext := range es.exts {
+	for i, ext := range ec.exts {
 		ext.BeforeHandshake(putter)
 		m[ext.MapKey()] = i + 1
 	}
@@ -68,78 +70,56 @@ func (es *ExtSession) SendHS(sender *MessageSender) error {
 	return (&ExtMsgSender{0, sender}).SendBytes(b)
 }
 
-// HandleMessage handle extention message
-func (es *ExtSession) HandleMessage(r io.Reader, sender *MessageSender) error {
-	var tmp [1]byte
+// HandlePayload handle extention message
+func (ec *ExtCenter) HandlePayload(payload []byte, sender *MessageSender) error {
+	if payload[0] == 0 {
+		// handshake
+		var hs map[string]bencode.RawMessage
 
-	_, err := r.Read(tmp[:])
-	if err != nil {
-		return err
-	}
-
-	id := tmp[0]
-
-	if id == 0 {
-		var msg map[string]bencode.RawMessage
-
-		dec := bencode.NewDecoder(r)
-		err := dec.Decode(&msg)
+		err := bencode.Unmarshal(payload[1:], &hs)
 		if err != nil {
 			return err
 		}
 
-		rawm, ok := msg["m"]
+		rawm, ok := hs["m"]
 		if !ok {
-			return errors.New("invalid extension handshake")
+			return errors.New("invalid handshake")
 		}
 
-		err = bencode.Unmarshal(rawm, &es.m)
+		err = bencode.Unmarshal(rawm, &ec.m)
 		if err != nil {
 			return err
 		}
 
-		hs := ExtHSGetter{msg}
-		for i, ext := range es.exts {
-			id, ok := es.m[ext.MapKey()]
+		getter := ExtHSGetter{hs}
+		for i, ext := range ec.exts {
+			id, ok := ec.m[ext.MapKey()]
 			if !ok || id == 0 {
 				ext.Unsupport()
-				es.exts[i] = nil
+				ec.exts[i] = nil
+				continue
 			}
-			err = ext.AfterHandshake(hs, &ExtMsgSender{es.m[ext.MapKey()], sender})
+
+			err = ext.AfterHandshake(getter, &ExtMsgSender{id, sender})
 			if err != nil {
 				return err
 			}
 		}
-
-		return nil
-	}
-
-	if len(es.m) == 0 {
-		return errors.New("have not handshake")
-	}
-
-	if int(id) > len(es.exts) {
-		buf := &bytes.Buffer{}
-		_, err := io.Copy(buf, r)
-		if err != nil {
-			return err
+	} else {
+		if len(ec.m) == 0 {
+			return errors.New("have not handshake")
 		}
-		var msg map[string]interface{}
-		err = bencode.Unmarshal(buf.Bytes(), &msg)
-		if err != nil {
-			return err
+		id := payload[0] - 1
+		if int(id) >= len(ec.exts) || ec.exts[id] == nil {
+			return errors.New("unknown this extension id")
 		}
-		fmt.Println(msg)
 
-		return fmt.Errorf("unkown extension message id:%d", id)
+		ext := ec.exts[id]
+
+		return ext.HandleMessage(payload[1:], &ExtMsgSender{ec.m[ext.MapKey()], sender})
 	}
 
-	ext := es.exts[id-1]
-	if ext == nil {
-		return errors.New("unsupport extension message id")
-	}
-
-	return ext.HandleMessage(r, &ExtMsgSender{es.m[ext.MapKey()], sender})
+	return nil
 }
 
 // ExtMsgSender used for send extension message
@@ -148,19 +128,9 @@ type ExtMsgSender struct {
 	s  *MessageSender
 }
 
-// Send will copy r to w, read n bytes from r
-func (sender *ExtMsgSender) Send(n uint32, r io.Reader) error {
-	msg := &Message{
-		Len: n + 2, // ExtID 1 byte and sender.id 1 byte
-		ID:  ExtID,
-		R:   io.MultiReader(bytes.NewReader([]byte{sender.id}), r),
-	}
-	return sender.s.SendMessage(msg)
-}
-
-// SendBytes will send b
-func (sender *ExtMsgSender) SendBytes(b []byte) error {
-	return sender.Send(uint32(len(b)), bytes.NewReader(b))
+// SendBytes will send content
+func (sender *ExtMsgSender) SendBytes(content []byte) error {
+	return sender.s.SendBytes(ExtID, bytes.Join([][]byte{[]byte{sender.id}, content}, nil))
 }
 
 // ExtHSPutter only can put entry into handshake

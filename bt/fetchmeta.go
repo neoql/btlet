@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
-	"io"
 
 	"github.com/neoql/btlet/bencode"
 )
@@ -27,9 +26,9 @@ type FetchMetaExt struct {
 }
 
 // NewFetchMetaExt returns a new FetchMetaExt
-func NewFetchMetaExt(opt HSOption) *FetchMetaExt {
+func NewFetchMetaExt(infoHash string) *FetchMetaExt {
 	return &FetchMetaExt{
-		infoHash: opt.InfoHash,
+		infoHash: infoHash,
 	}
 }
 
@@ -56,6 +55,9 @@ func (fm *FetchMetaExt) AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) err
 		return errors.New("don't known metadata size")
 	}
 
+	if size <= 0 {
+		return errors.New("wrong size")
+	}
 	piecesNum := getPiecesNum(size)
 	fm.pieces = make([][]byte, piecesNum)
 
@@ -65,12 +67,12 @@ func (fm *FetchMetaExt) AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) err
 				"msg_type": request,
 				"piece":    i,
 			}
-	
+
 			b, err := bencode.Marshal(m)
 			if err != nil {
 				return
 			}
-	
+
 			err = sender.SendBytes(b)
 			if err != nil {
 				return
@@ -87,19 +89,11 @@ func (fm *FetchMetaExt) Unsupport() {
 }
 
 // HandleMessage implements Extension.HandleMessage
-func (fm *FetchMetaExt) HandleMessage(r io.Reader, sender *ExtMsgSender) error {
+func (fm *FetchMetaExt) HandleMessage(content []byte, sender *ExtMsgSender) error {
 	var msg map[string]int
 
-	buf := &bytes.Buffer{}
-
-	_, err := io.Copy(buf, r)
-	if err != nil {
-		return err
-	}
-
-	raw := buf.Bytes()
-	dec := bencode.NewDecoder(bytes.NewReader(raw))
-	err = dec.Decode(&msg)
+	dec := bencode.NewDecoder(bytes.NewReader(content))
+	err := dec.Decode(&msg)
 	if err != nil {
 		return err
 	}
@@ -111,7 +105,7 @@ func (fm *FetchMetaExt) HandleMessage(r io.Reader, sender *ExtMsgSender) error {
 	case data:
 		no := msg["piece"]
 
-		fm.pieces[no] = raw[dec.BytesParsed():]
+		fm.pieces[no] = content[dec.BytesParsed():]
 	}
 
 	return nil
