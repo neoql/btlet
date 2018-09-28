@@ -14,7 +14,10 @@ import (
 // Pipeline is used for handle meta
 type Pipeline interface {
 	DisposeMeta(string, bt.RawMeta)
+	DisposeMetaAndTracker(string, bt.RawMeta, []string)
+	Has(string) bool
 	PullTrackerList(string) ([]string, bool)
+	AppendTracker(string, []string)
 }
 
 // SniffMode is the mode to sniff infohash
@@ -27,10 +30,11 @@ const (
 
 // SnifferBuilder can build Sniffer
 type SnifferBuilder struct {
-	IP         string
-	Port       int
-	Mode       SniffMode
-	MaxWorkers int
+	IP           string
+	Port         int
+	Mode         SniffMode
+	MaxWorkers   int
+	FetchTracker bool
 }
 
 // NewSnifferBuilder returns a new SnifferBuilder with default config
@@ -54,14 +58,18 @@ func (builder *SnifferBuilder) NewSniffer(p Pipeline) *Sniffer {
 	default:
 		return nil
 	}
-	return NewSniffer(crawler, p)
+	return &Sniffer{
+		pipeline:  p,
+		crawler:   crawler,
+		enableTex: builder.FetchTracker,
+	}
 }
 
 // Sniffer can crawl Meta from dht.
 type Sniffer struct {
-	crawler  dht.Crawler
-	pipeline Pipeline
-	ctx      context.Context
+	crawler   dht.Crawler
+	pipeline  Pipeline
+	enableTex bool
 }
 
 // NewSniffer returns a Sniffer
@@ -72,9 +80,13 @@ func NewSniffer(c dht.Crawler, p Pipeline) *Sniffer {
 	}
 }
 
+// EnableFetchTracker makes sniffer fetch tracker
+func (sniffer *Sniffer) EnableFetchTracker() {
+	sniffer.enableTex = true
+}
+
 // Sniff starts sniff meta
 func (sniffer *Sniffer) Sniff(ctx context.Context) error {
-	sniffer.ctx = ctx
 	return sniffer.crawler.Crawl(ctx, sniffer.afterCrawl)
 }
 
@@ -114,19 +126,37 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 
 	sender := session.MessageSender()
 
-	fmExt := bt.NewFetchMetaExt(infoHash)
 	center := bt.NewExtCenter()
-	center.RegistExt(fmExt)
+	var fmExt *bt.FetchMetaExt
+	var txExt *bt.TexExtension
+
+	if !sniffer.enableTex {
+		if sniffer.pipeline.Has(infoHash) {
+			return
+		}
+
+		fmExt = bt.NewFetchMetaExt(infoHash)
+		center.RegistExt(fmExt)
+	} else {
+		trlist, ok := sniffer.pipeline.PullTrackerList(infoHash)
+		txExt = bt.NewTexExtension(trlist)
+		center.RegistExt(txExt)
+		if !ok {
+			fmExt = bt.NewFetchMetaExt(infoHash)
+			center.RegistExt(fmExt)
+		}
+	}
 
 	err = center.SendHS(sender)
 	if err != nil {
 		return
 	}
 
+	var rawmeta []byte
+	var fmdone bool
 	for {
 		message, err := session.NextMessage()
 		if err != nil {
-			// fmt.Println(err)
 			return
 		}
 
@@ -136,16 +166,68 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 
 		err = center.HandlePayload(message[1:], sender)
 		if err != nil {
-			// fmt.Println(err)
 			return
 		}
 
-		if fmExt.CheckDone() {
-			meta, err := fmExt.FetchRawMeta()
-			if err == nil && sniffer.pipeline != nil {
-				sniffer.pipeline.DisposeMeta(infoHash, meta)
+		if !sniffer.enableTex {
+			if !fmExt.IsSupoort() {
+				return
 			}
-			break
+
+			if fmExt.CheckDone() {
+				meta, err := fmExt.FetchRawMeta()
+				if err == nil && sniffer.pipeline != nil {
+					sniffer.pipeline.DisposeMeta(infoHash, meta)
+				}
+				break
+			}
+		} else {
+			if fmExt != nil && fmExt.IsSupoort() {
+				if !txExt.IsSupoort() {
+					if fmExt.CheckDone() {
+						meta, err := fmExt.FetchRawMeta()
+						if err == nil && sniffer.pipeline != nil {
+							sniffer.pipeline.DisposeMeta(infoHash, meta)
+						}
+						break
+					}
+				} else {
+					if !fmdone && fmExt.CheckDone() {
+						fmdone = true
+						meta, err := fmExt.FetchRawMeta()
+						if err != nil {
+							rawmeta = meta
+						}
+					}
+
+					if fmdone && !txExt.More() {
+						trlist := txExt.TrackerList()
+						if len(trlist) == 0 {
+							if rawmeta != nil {
+								sniffer.pipeline.DisposeMeta(infoHash, rawmeta)
+							}
+						} else {
+							if rawmeta != nil {
+								sniffer.pipeline.DisposeMetaAndTracker(infoHash, rawmeta, trlist)
+							} else {
+								sniffer.pipeline.AppendTracker(infoHash, trlist)
+							}
+						}
+						break
+					}
+				}
+			} else {
+				if !txExt.IsSupoort() {
+					return
+				}
+				if !txExt.More() {
+					trlist := txExt.TrackerList()
+					if len(trlist) != 0 {
+						sniffer.pipeline.AppendTracker(infoHash, trlist)
+					}
+					break
+				}
+			}
 		}
 	}
 }

@@ -6,11 +6,6 @@ import (
 	"github.com/neoql/btlet/bencode"
 )
 
-const (
-	// utMetadata is th ui_metadata id
-	utMetadata = 2
-)
-
 // RawMeta is raw metadata
 type RawMeta bencode.RawMessage
 
