@@ -74,6 +74,22 @@ func (p *SimplePipeline) PullTrackerList(string) ([]string, bool) {
 	return nil, false
 }
 
+// DisposeMetaAndTracker dispose Meta and tracker
+func (p *SimplePipeline) DisposeMetaAndTracker(infohash string, rawmeta bt.RawMeta, trlist []string) {
+	p.DisposeMeta(infohash, rawmeta)
+	p.AppendTracker(infohash, trlist)
+}
+
+// Has always returns false
+func (p *SimplePipeline) Has(infoHash string) bool {
+	return false
+}
+
+// AppendTracker appends trackers
+func (p *SimplePipeline) AppendTracker(infaoHash string, trlist []string) {
+	
+}
+
 type metaOutline struct {
 	link  string
 	title string
