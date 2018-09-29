@@ -376,10 +376,7 @@ func (dec *Decoder) decodeDict(val reflect.Value) error {
 
 		var e reflect.Value
 		if isMap {
-			e = val.MapIndex(reflect.ValueOf(key))
-			if !e.IsValid() {
-				e = reflect.New(t.Elem()).Elem()
-			}
+			e = reflect.New(t.Elem()).Elem()
 		} else {
 			var ok bool
 			e, ok = m[key]
