@@ -20,78 +20,51 @@ type Pipeline interface {
 	AppendTracker(string, []string)
 }
 
-// SniffMode is the mode to sniff infohash
-type SniffMode int
-
-const (
-	// SybilMode is sybil mode
-	SybilMode = SniffMode(iota)
-)
-
-// SnifferBuilder can build Sniffer
-type SnifferBuilder struct {
-	IP           string
-	Port         int
-	Mode         SniffMode
-	MaxWorkers   int
-	FetchTracker bool
-}
-
-// NewSnifferBuilder returns a new SnifferBuilder with default config
-func NewSnifferBuilder() *SnifferBuilder {
-	return &SnifferBuilder{
-		IP:   "0.0.0.0",
-		Port: 7878,
-		Mode: SybilMode,
-	}
-}
-
-// NewSniffer returns a Sniffer with the builder's config.
-// If Mode is unknow will return nil
-func (builder *SnifferBuilder) NewSniffer(p Pipeline) *Sniffer {
-	var crawler dht.Crawler
-	switch builder.Mode {
-	case SybilMode:
-		c := dht.NewSybilCrawler(builder.IP, builder.Port)
-		c.SetMaxWorkers(builder.MaxWorkers)
-		crawler = c
-	default:
-		return nil
-	}
-	return &Sniffer{
-		pipeline:  p,
-		crawler:   crawler,
-		enableTex: builder.FetchTracker,
-	}
-}
-
-// Sniffer can crawl Meta from dht.
-type Sniffer struct {
+// Spider can crawl Meta from dht.
+type Spider struct {
 	crawler   dht.Crawler
 	pipeline  Pipeline
 	enableTex bool
 }
 
-// NewSniffer returns a Sniffer
-func NewSniffer(c dht.Crawler, p Pipeline) *Sniffer {
-	return &Sniffer{
-		crawler:  c,
-		pipeline: p,
+// NewSpider returns a Sniffer
+func NewSpider() *Spider {
+	return &Spider{}
+}
+
+// Use set which crawler will use.
+func (spi *Spider) Use(crawler dht.Crawler) {
+	spi.crawler = crawler
+}
+
+// UseSybilCrawler will use dht.SybilCrawler
+func (spi *Spider) UseSybilCrawler() {
+	spi.Use(dht.NewSybilCrawler("0.0.0.0", 7878))
+}
+
+// LimitSybilCrawler will use a dht.SybilCrawler
+func (spi *Spider) LimitSybilCrawler(limit int) {
+	c := dht.NewSybilCrawler("0.0.0.0", 7878)
+	c.SetMaxWorkers(limit)
+	spi.Use(c)
+}
+
+// EnableFetchTracker makes spider fetch tracker
+func (spi *Spider) EnableFetchTracker() {
+	spi.enableTex = true
+}
+
+// Run starts sniff meta
+func (spi *Spider) Run(ctx context.Context, pipeline Pipeline) error {
+	if spi.crawler == nil {
+		spi.UseSybilCrawler()
 	}
+
+	spi.pipeline = pipeline
+	return spi.crawler.Crawl(ctx, spi.afterCrawl)
 }
 
-// EnableFetchTracker makes sniffer fetch tracker
-func (sniffer *Sniffer) EnableFetchTracker() {
-	sniffer.enableTex = true
-}
-
-// Sniff starts sniff meta
-func (sniffer *Sniffer) Sniff(ctx context.Context) error {
-	return sniffer.crawler.Crawl(ctx, sniffer.afterCrawl)
-}
-
-func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
-	defer recover()
+func (spi *Spider) afterCrawl(infoHash string, ip net.IP, port int) {
 	// connect to peer
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), time.Second*15)
 	if err != nil {
@@ -130,15 +103,15 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 	var fmExt *bt.FetchMetaExt
 	var txExt *bt.TexExtension
 
-	if !sniffer.enableTex {
-		if sniffer.pipeline.Has(infoHash) {
+	if !spi.enableTex {
+		if spi.pipeline.Has(infoHash) {
 			return
 		}
 
 		fmExt = bt.NewFetchMetaExt(infoHash)
 		center.RegistExt(fmExt)
 	} else {
-		trlist, ok := sniffer.pipeline.PullTrackerList(infoHash)
+		trlist, ok := spi.pipeline.PullTrackerList(infoHash)
 		txExt = bt.NewTexExtension(trlist)
 		center.RegistExt(txExt)
 		if !ok {
@@ -169,15 +142,15 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 			return
 		}
 
-		if !sniffer.enableTex {
+		if !spi.enableTex {
 			if !fmExt.IsSupoort() {
 				return
 			}
 
 			if fmExt.CheckDone() {
 				meta, err := fmExt.FetchRawMeta()
-				if err == nil && sniffer.pipeline != nil {
-					sniffer.pipeline.DisposeMeta(infoHash, meta)
+				if err == nil && spi.pipeline != nil {
+					spi.pipeline.DisposeMeta(infoHash, meta)
 				}
 				break
 			}
@@ -186,8 +159,8 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 				if !txExt.IsSupoort() {
 					if fmExt.CheckDone() {
 						meta, err := fmExt.FetchRawMeta()
-						if err == nil && sniffer.pipeline != nil {
-							sniffer.pipeline.DisposeMeta(infoHash, meta)
+						if err == nil && spi.pipeline != nil {
+							spi.pipeline.DisposeMeta(infoHash, meta)
 						}
 						break
 					}
@@ -204,13 +177,13 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 						trlist := txExt.TrackerList()
 						if len(trlist) == 0 {
 							if rawmeta != nil {
-								sniffer.pipeline.DisposeMeta(infoHash, rawmeta)
+								spi.pipeline.DisposeMeta(infoHash, rawmeta)
 							}
 						} else {
 							if rawmeta != nil {
-								sniffer.pipeline.DisposeMetaAndTracker(infoHash, rawmeta, trlist)
+								spi.pipeline.DisposeMetaAndTracker(infoHash, rawmeta, trlist)
 							} else {
-								sniffer.pipeline.AppendTracker(infoHash, trlist)
+								spi.pipeline.AppendTracker(infoHash, trlist)
 							}
 						}
 						break
@@ -223,7 +196,7 @@ func (sniffer *Sniffer) afterCrawl(infoHash string, ip net.IP, port int) {
 				if !txExt.More() {
 					trlist := txExt.TrackerList()
 					if len(trlist) != 0 {
-						sniffer.pipeline.AppendTracker(infoHash, trlist)
+						spi.pipeline.AppendTracker(infoHash, trlist)
 					}
 					break
 				}
