@@ -18,33 +18,11 @@ $ go get -v github.com/neoql/btlet
 
 ### DHT-Spider
 
+[示例代码](./example/btsniffer)
+
 运行截图
 
 ![](./screenshot/btsniffer.png)
-
-> Example
-
-下面是一个简单的爬虫例子，[这里](./example/btsniffer)是完整的Demo
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/neoql/btlet"
-)
-
-func main() {
-    builder := btlet.NewSnifferBuilder()
-    p := btlet.NewSimplePipeline()
-    s := builder.NewSniffer(p)
-    go s.Sniff(context.TODO())
-    
-    for meta := range p.MetaChan() {
-        fmt.Println(meta)
-    }
-}
-```
 
 ## License
 
