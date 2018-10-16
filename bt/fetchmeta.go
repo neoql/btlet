@@ -4,9 +4,86 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
+	"net"
+	"time"
 
 	"github.com/neoql/btlet/bencode"
+	"github.com/neoql/btlet/tools"
 )
+
+// FetchMetadata fetch metadata from host.
+func FetchMetadata(infoHash string, host string) (RawMeta, error) {
+	// connect to peer
+	conn, err := net.DialTimeout("tcp", host, time.Second*15)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	session := NewSession(conn)
+
+	// handshake
+	var reserved uint64
+	SetExtReserved(&reserved)
+	opt, err := session.Handshake(&HSOption{
+		Reserved: reserved,
+		InfoHash: infoHash,
+		PeerID:   tools.RandomString(20),
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// peer send different info_hash
+	if opt.InfoHash != infoHash {
+		return nil, errors.New("handshake failed: different info_hash")
+	}
+
+	if !CheckExtReserved(opt.Reserved) {
+		// not support extensions
+		return nil, errors.New("not support extensions")
+	}
+
+	sender := session.MessageSender()
+
+	center := NewExtCenter()
+
+	fmExt := NewFetchMetaExt(infoHash)
+	center.RegistExt(fmExt)
+
+	err = center.SendHS(sender)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		message, err := session.NextMessage()
+		if err != nil {
+			return nil, err
+		}
+
+		if len(message) == 0 || message[0] != ExtID {
+			continue
+		}
+
+		err = center.HandlePayload(message[1:], sender)
+		if err != nil {
+			return nil, err
+		}
+
+		if !fmExt.IsSupoort() {
+			return nil, errors.New("not support Extension for Peers to Send Metadata Files")
+		}
+
+		if fmExt.CheckDone() {
+			meta, err := fmExt.FetchRawMeta()
+			if err == nil {
+				return meta, nil
+			}
+		}
+	}
+}
 
 const (
 	request = iota

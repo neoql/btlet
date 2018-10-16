@@ -2,6 +2,7 @@ package btlet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -74,133 +75,163 @@ func (spi *Spider) afterCrawl(infoHash string, ip net.IP, port int) {
 
 	session := bt.NewSession(conn)
 
-	// handshake
+	mtf := &metaTrackFetcher{
+		infoHash: infoHash,
+		sess:     session,
+		pipe:     spi.pipeline,
+	}
+
+	err = mtf.Handshake()
+	if err != nil {
+		return
+	}
+
+	mtf.RegistExts()
+	err = mtf.MainLoop()
+	if err != nil {
+		return
+	}
+}
+
+type metaTrackFetcher struct {
+	infoHash string
+	sess     *bt.Session
+	pipe     Pipeline
+
+	extCenter *bt.ExtCenter
+	fmExt     *bt.FetchMetaExt
+	txExt     *bt.TexExtension
+	rawmeta   []byte
+	fmdone    bool
+}
+
+func (mtf *metaTrackFetcher) Handshake() error {
 	var reserved uint64
 	bt.SetExtReserved(&reserved)
-	opt, err := session.Handshake(&bt.HSOption{
+	opt, err := mtf.sess.Handshake(&bt.HSOption{
 		Reserved: reserved,
-		InfoHash: infoHash,
+		InfoHash: mtf.infoHash,
 		PeerID:   tools.RandomString(20),
 	})
 
 	if err != nil {
-		return
+		return err
 	}
 
 	// peer send different info_hash
-	if opt.InfoHash != infoHash {
-		return
+	if opt.InfoHash != mtf.infoHash {
+		return errors.New("handshake failed: different info_hash")
 	}
 
 	if !bt.CheckExtReserved(opt.Reserved) {
 		// not support extensions
-		return
+		return errors.New("not support extensions")
 	}
 
-	sender := session.MessageSender()
+	return nil
+}
 
-	center := bt.NewExtCenter()
-	var fmExt *bt.FetchMetaExt
-	var txExt *bt.TexExtension
-
-	if !spi.enableTex {
-		if spi.pipeline.Has(infoHash) {
-			return
-		}
-
-		fmExt = bt.NewFetchMetaExt(infoHash)
-		center.RegistExt(fmExt)
-	} else {
-		trlist, ok := spi.pipeline.PullTrackerList(infoHash)
-		txExt = bt.NewTexExtension(trlist)
-		center.RegistExt(txExt)
-		if !ok {
-			fmExt = bt.NewFetchMetaExt(infoHash)
-			center.RegistExt(fmExt)
-		}
+func (mtf *metaTrackFetcher) RegistExts() {
+	mtf.extCenter = bt.NewExtCenter()
+	trlist, ok := mtf.pipe.PullTrackerList(mtf.infoHash)
+	mtf.txExt = bt.NewTexExtension(trlist)
+	mtf.extCenter.RegistExt(mtf.txExt)
+	if !ok {
+		mtf.fmExt = bt.NewFetchMetaExt(mtf.infoHash)
+		mtf.extCenter.RegistExt(mtf.fmExt)
 	}
+}
 
-	err = center.SendHS(sender)
+func (mtf *metaTrackFetcher) MainLoop() error {
+	sender := mtf.sess.MessageSender()
+	err := mtf.extCenter.SendHS(sender)
 	if err != nil {
-		return
+		return err
 	}
 
-	var rawmeta []byte
-	var fmdone bool
 	for {
-		message, err := session.NextMessage()
+		message, err := mtf.sess.NextMessage()
 		if err != nil {
-			return
+			return err
 		}
 
 		if len(message) == 0 || message[0] != bt.ExtID {
 			continue
 		}
 
-		err = center.HandlePayload(message[1:], sender)
+		err = mtf.extCenter.HandlePayload(message[1:], sender)
 		if err != nil {
-			return
+			return err
 		}
 
-		if !spi.enableTex {
-			if !fmExt.IsSupoort() {
-				return
-			}
-
-			if fmExt.CheckDone() {
-				meta, err := fmExt.FetchRawMeta()
-				if err == nil && spi.pipeline != nil {
-					spi.pipeline.DisposeMeta(infoHash, meta)
-				}
-				break
-			}
-		} else {
-			if fmExt != nil && fmExt.IsSupoort() {
-				if !txExt.IsSupoort() {
-					if fmExt.CheckDone() {
-						meta, err := fmExt.FetchRawMeta()
-						if err == nil && spi.pipeline != nil {
-							spi.pipeline.DisposeMeta(infoHash, meta)
-						}
-						break
-					}
-				} else {
-					if !fmdone && fmExt.CheckDone() {
-						fmdone = true
-						meta, err := fmExt.FetchRawMeta()
-						if err != nil {
-							rawmeta = meta
-						}
-					}
-
-					if fmdone && !txExt.More() {
-						trlist := txExt.TrackerList()
-						if len(trlist) == 0 {
-							if rawmeta != nil {
-								spi.pipeline.DisposeMeta(infoHash, rawmeta)
-							}
-						} else {
-							if rawmeta != nil {
-								spi.pipeline.DisposeMetaAndTracker(infoHash, rawmeta, trlist)
-							} else {
-								spi.pipeline.AppendTracker(infoHash, trlist)
-							}
-						}
-						break
-					}
+		if mtf.fmExt != nil && mtf.fmExt.IsSupoort() {
+			if !mtf.txExt.IsSupoort() {
+				if !mtf.onlyMeta() {
+					break
 				}
 			} else {
-				if !txExt.IsSupoort() {
-					return
-				}
-				if !txExt.More() {
-					trlist := txExt.TrackerList()
-					if len(trlist) != 0 {
-						spi.pipeline.AppendTracker(infoHash, trlist)
-					}
+				if !mtf.metaAndTracker() {
 					break
 				}
 			}
+		} else {
+			if !mtf.txExt.IsSupoort() {
+				return errors.New("not support tex")
+			}
+			if !mtf.onlyTracker() {
+				break
+			}
 		}
 	}
+
+	return nil
+}
+
+func (mtf *metaTrackFetcher) onlyMeta() bool {
+	if mtf.fmExt.CheckDone() {
+		meta, err := mtf.fmExt.FetchRawMeta()
+		if err == nil && mtf.pipe != nil {
+			mtf.pipe.DisposeMeta(mtf.infoHash, meta)
+		}
+		return false
+	}
+	return true
+}
+
+func (mtf *metaTrackFetcher) onlyTracker() bool {
+	if !mtf.txExt.More() {
+		trlist := mtf.txExt.TrackerList()
+		if len(trlist) != 0 {
+			mtf.pipe.AppendTracker(mtf.infoHash, trlist)
+		}
+		return false
+	}
+	return true
+}
+
+func (mtf *metaTrackFetcher) metaAndTracker() bool {
+	if !mtf.fmdone && mtf.fmExt.CheckDone() {
+		mtf.fmdone = true
+		meta, err := mtf.fmExt.FetchRawMeta()
+		if err != nil {
+			mtf.rawmeta = meta
+		}
+	}
+
+	if mtf.fmdone && !mtf.txExt.More() {
+		trlist := mtf.txExt.TrackerList()
+		if len(trlist) == 0 {
+			if mtf.rawmeta != nil {
+				mtf.pipe.DisposeMeta(mtf.infoHash, mtf.rawmeta)
+			}
+		} else {
+			if mtf.rawmeta != nil {
+				mtf.pipe.DisposeMetaAndTracker(mtf.infoHash, mtf.rawmeta, trlist)
+			} else {
+				mtf.pipe.AppendTracker(mtf.infoHash, trlist)
+			}
+		}
+		return false
+	}
+	return true
 }
