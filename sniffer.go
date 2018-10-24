@@ -14,9 +14,14 @@ import (
 
 // Pipeline is used for handle meta
 type Pipeline interface {
-	DisposeMeta(string, bt.RawMeta)
-	DisposeMetaAndTracker(string, bt.RawMeta, []string)
 	Has(string) bool
+	DisposeMeta(string, bt.RawMeta)
+}
+
+// PipelineX used for spider.RunAndFetchTracker
+type PipelineX interface {
+	Pipeline
+	DisposeMetaAndTracker(string, bt.RawMeta, []string)
 	PullTrackerList(string) ([]string, bool)
 	AppendTracker(string, []string)
 }
@@ -24,8 +29,6 @@ type Pipeline interface {
 // Spider can crawl Meta from dht.
 type Spider struct {
 	crawler   dht.Crawler
-	pipeline  Pipeline
-	enableTex bool
 }
 
 // NewSpider returns a Sniffer
@@ -40,19 +43,14 @@ func (spi *Spider) Use(crawler dht.Crawler) {
 
 // UseSybilCrawler will use dht.SybilCrawler
 func (spi *Spider) UseSybilCrawler() {
-	spi.Use(dht.NewSybilCrawler("0.0.0.0", 7878))
+	spi.Use(dht.NewSybilCrawler("0.0.0.0:6881"))
 }
 
 // LimitSybilCrawler will use a dht.SybilCrawler
 func (spi *Spider) LimitSybilCrawler(limit int) {
-	c := dht.NewSybilCrawler("0.0.0.0", 7878)
+	c := dht.NewSybilCrawler("0.0.0.0:6881")
 	c.SetMaxWorkers(limit)
 	spi.Use(c)
-}
-
-// EnableFetchTracker makes spider fetch tracker
-func (spi *Spider) EnableFetchTracker() {
-	spi.enableTex = true
 }
 
 // Run starts sniff meta
@@ -61,42 +59,59 @@ func (spi *Spider) Run(ctx context.Context, pipeline Pipeline) error {
 		spi.UseSybilCrawler()
 	}
 
-	spi.pipeline = pipeline
-	return spi.crawler.Crawl(ctx, spi.afterCrawl)
+	return spi.crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
+		if pipeline.Has(infoHash) {
+			return
+		}
+
+		meta, err := bt.FetchMetadata(infoHash, fmt.Sprintf("%s:%d", ip, port))
+		if err != nil {
+			return
+		}
+
+		pipeline.DisposeMeta(infoHash, meta)
+	})
 }
 
-func (spi *Spider) afterCrawl(infoHash string, ip net.IP, port int) {
-	// connect to peer
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), time.Second*15)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-
-	session := bt.NewSession(conn)
-
-	mtf := &metaTrackFetcher{
-		infoHash: infoHash,
-		sess:     session,
-		pipe:     spi.pipeline,
+// RunAndFetchTracker run and fetch tracker use tex protocal
+func (spi *Spider) RunAndFetchTracker(ctx context.Context, pipeline PipelineX) error {
+	if spi.crawler == nil {
+		spi.UseSybilCrawler()
 	}
 
-	err = mtf.Handshake()
-	if err != nil {
-		return
-	}
+	return spi.crawler.Crawl(ctx, func(infoHash string, ip net.IP, port int) {
+		// connect to peer
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), time.Second*15)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
 
-	mtf.RegistExts()
-	err = mtf.MainLoop()
-	if err != nil {
-		return
-	}
+		session := bt.NewSession(conn)
+
+		mtf := &metaTrackFetcher{
+			infoHash: infoHash,
+			sess:     session,
+			pipe:     pipeline,
+		}
+
+		err = mtf.Handshake()
+		if err != nil {
+			return
+		}
+
+		mtf.RegistExts()
+		err = mtf.MainLoop()
+		if err != nil {
+			return
+		}
+	})
 }
 
 type metaTrackFetcher struct {
 	infoHash string
 	sess     *bt.Session
-	pipe     Pipeline
+	pipe     PipelineX
 
 	extCenter *bt.ExtCenter
 	fmExt     *bt.FetchMetaExt

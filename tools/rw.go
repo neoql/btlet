@@ -1,9 +1,6 @@
 package tools
 
 import (
-	"bytes"
-	"encoding/binary"
-	"io"
 	"net"
 	"time"
 )
@@ -28,26 +25,6 @@ func (r *StreamReader) Read(b []byte) (int, error) {
 		return 0, err
 	}
 	return r.conn.Read(b)
-}
-
-// ReadUInt32 read an uint32
-func (r *StreamReader) ReadUInt32() (v uint32, err error) {
-	bytes, err := r.ReadBytes(4)
-	if err != nil {
-		return
-	}
-	v = binary.BigEndian.Uint32(bytes)
-	return
-}
-
-// ReadBytes read bytes from r
-func (r *StreamReader) ReadBytes(delim int64) ([]byte, error) {
-	w := bytes.NewBuffer(make([]byte, 0, delim))
-	_, err := io.CopyN(w, r, delim)
-	if err != nil {
-		return nil, err
-	}
-	return w.Bytes(), nil
 }
 
 // StreamWriter is stream writer

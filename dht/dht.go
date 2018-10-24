@@ -3,7 +3,6 @@ package dht
 import (
 	"context"
 	"net"
-	"strconv"
 	"time"
 
 	"github.com/neoql/btlet/bencode"
@@ -36,8 +35,8 @@ type Core struct {
 }
 
 // NewCore returns a new Core instance.
-func NewCore(ip string, port int) (*Core, error) {
-	addr, err := net.ResolveUDPAddr("udp", ip+":"+strconv.Itoa(port))
+func NewCore(host string) (*Core, error) {
+	addr, err := net.ResolveUDPAddr("udp", host)
 	if err != nil {
 		return nil, err
 	}

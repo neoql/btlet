@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/neoql/btlet/tools"
 	"github.com/neoql/btlet/bencode"
+	"github.com/neoql/btlet/tools"
 	"github.com/willf/bloom"
 )
 
@@ -23,17 +23,15 @@ type Crawler interface {
 
 // SybilCrawler can crawl info hash from DHT.
 type SybilCrawler struct {
-	ip         string
-	port       int
+	host       string
 	nodeID     string
 	maxWorkers int
 }
 
 // NewSybilCrawler returns a new Crawler instance.
-func NewSybilCrawler(ip string, port int) *SybilCrawler {
+func NewSybilCrawler(host string) *SybilCrawler {
 	return &SybilCrawler{
-		ip:     ip,
-		port:   port,
+		host:   host,
 		nodeID: tools.RandomString(20),
 	}
 }
@@ -46,7 +44,7 @@ func (crawler *SybilCrawler) SetMaxWorkers(n int) {
 
 // Crawl ovrride Crawler.Crawl
 func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) error {
-	core, err := NewCore(crawler.ip, crawler.port)
+	core, err := NewCore(crawler.host)
 	if err != nil {
 		return err
 	}
@@ -217,8 +215,8 @@ func (transaction *sybilTransaction) OnQuery(handle Handle, src *net.UDPAddr, tr
 		nodes := NodePtrSlice(nil)
 		r, err := MakeResponse(transactionID, &Response{
 			NodeID: makeID(a.NodeID, handle.NodeID()),
-			Token: tools.RandomString(20),
-			Nodes: &nodes,
+			Token:  tools.RandomString(20),
+			Nodes:  &nodes,
 		})
 		if err != nil {
 			return
