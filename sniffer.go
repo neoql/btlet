@@ -73,6 +73,16 @@ func (spi *Spider) Run(ctx context.Context, pipeline Pipeline) error {
 	})
 }
 
+// Stimulate will Stimulate the spider when Crawler is Stimulater and returns true.
+// else do nothing and returns false.
+func (spi *Spider) Stimulate() bool {
+	stimulater, ok := spi.crawler.(dht.Stimulater)
+	if ok {
+		stimulater.Stimulate()
+	}
+	return ok
+}
+
 // RunAndFetchTracker run and fetch tracker use tex protocal
 func (spi *Spider) RunAndFetchTracker(ctx context.Context, pipeline PipelineX) error {
 	if spi.crawler == nil {

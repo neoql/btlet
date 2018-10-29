@@ -3,7 +3,6 @@ package dht
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -21,11 +20,18 @@ type Crawler interface {
 	Crawl(ctx context.Context, callback CrawCallback) error
 }
 
+// Stimulater could be stimulate
+type Stimulater interface {
+	Stimulate()
+}
+
 // SybilCrawler can crawl info hash from DHT.
 type SybilCrawler struct {
 	host       string
 	nodeID     string
 	maxWorkers int
+
+	transaction *sybilTransaction
 }
 
 // NewSybilCrawler returns a new Crawler instance.
@@ -53,6 +59,7 @@ func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) e
 	handle := core.Handle(crawler.nodeID)
 	dispatcher := NewTransactionDispatcher(handle)
 	transaction := newSybilTransaction(tools.RandomString(2), callback)
+	crawler.transaction = transaction
 
 	err = dispatcher.Add(transaction)
 	if err != nil {
@@ -67,6 +74,12 @@ func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) e
 	}
 
 	return core.Serv(ctx, disposer)
+}
+
+// Stimulate implements Stimulater
+func (crawler *SybilCrawler) Stimulate() {
+	crawler.transaction.changeTarget()
+	crawler.transaction.filter.Reset()
 }
 
 type sybilMessageDisposer struct {
@@ -262,8 +275,7 @@ func (transaction *sybilTransaction) changeTarget() {
 	transaction.lock.Lock()
 	defer transaction.lock.Unlock()
 
-	len := rand.Int() % 20
-	transaction.target = transaction.target[:len] + tools.RandomString(uint(20-len))
+	transaction.target = tools.RandomString(20)
 }
 
 func (transaction *sybilTransaction) OnFinish(handle Handle) {
