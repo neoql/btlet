@@ -158,14 +158,14 @@ func (transaction *sybilTransaction) OnLaunch(handle Handle) {
 }
 
 func (transaction *sybilTransaction) boot(handle Handle, bootstrap []string) {
-	nodes := make([]*Node, len(bootstrap))
-	for i, url := range bootstrap {
+	nodes := make([]*Node, 0, len(bootstrap))
+	for _, url := range bootstrap {
 		addr, err := net.ResolveUDPAddr("udp", url)
 		if err != nil {
 			// TODO: handle error
 			continue
 		}
-		nodes[i] = &Node{addr, ""}
+		nodes = append(nodes, &Node{addr, ""})
 	}
 
 	transaction.findTargetNode(handle, transaction.Target(), nodes...)
