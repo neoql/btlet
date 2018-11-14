@@ -3,6 +3,7 @@ package bt
 import (
 	"bytes"
 	"crypto/sha1"
+	"context"
 	"errors"
 	"net"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 // FetchMetadata fetch metadata from host.
-func FetchMetadata(infoHash string, host string) (RawMeta, error) {
+func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, error) {
 	// connect to peer
 	conn, err := net.DialTimeout("tcp", host, time.Second*15)
 	if err != nil {
@@ -58,6 +59,12 @@ func FetchMetadata(infoHash string, host string) (RawMeta, error) {
 	}
 
 	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		message, err := session.NextMessage()
 		if err != nil {
 			return nil, err

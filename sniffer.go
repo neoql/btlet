@@ -64,7 +64,9 @@ func (spi *Spider) Run(ctx context.Context, pipeline Pipeline) error {
 			return
 		}
 
-		meta, err := bt.FetchMetadata(infoHash, fmt.Sprintf("%s:%d", ip, port))
+		fctx, cancel := context.WithTimeout(ctx, time.Minute*5)
+		defer cancel()
+		meta, err := bt.FetchMetadata(fctx, infoHash, fmt.Sprintf("%s:%d", ip, port))
 		if err != nil {
 			return
 		}
