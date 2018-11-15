@@ -2,8 +2,8 @@ package bt
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"context"
+	"crypto/sha1"
 	"errors"
 
 	"github.com/neoql/btlet/bencode"
@@ -32,12 +32,12 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 		return nil, errors.New("not support extensions")
 	}
 
-	center := NewExtCenter(stream)
+	proto := NewExtProtocol(stream)
 
 	fmExt := NewFetchMetaExt(infoHash)
-	center.RegistExt(fmExt)
+	proto.RegistExt(fmExt)
 
-	err = center.SendHS()
+	err = proto.WriteHandshake()
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 			continue
 		}
 
-		err = center.HandlePayload(message[1:])
+		err = proto.HandlePayload(message[1:])
 		if err != nil {
 			return nil, err
 		}

@@ -35,17 +35,17 @@ type Extension interface {
 	HandleMessage(content []byte, sender *ExtMsgSender) error
 }
 
-// ExtCenter is extension center
-type ExtCenter struct {
+// ExtProtocol is extension center
+type ExtProtocol struct {
 	stream Stream
 	exts   []Extension
 	m      map[string]byte
 	sender *ExtMsgSender
 }
 
-// NewExtCenter returns a new extension center
-func NewExtCenter(stream Stream, exts ...Extension) *ExtCenter {
-	return &ExtCenter{
+// NewExtProtocol returns a new extension center
+func NewExtProtocol(stream Stream, exts ...Extension) *ExtProtocol {
+	return &ExtProtocol{
 		stream: stream,
 		exts:   exts,
 		m:      make(map[string]byte),
@@ -53,24 +53,24 @@ func NewExtCenter(stream Stream, exts ...Extension) *ExtCenter {
 }
 
 // RegistExt regists extension into center
-func (ec *ExtCenter) RegistExt(ext Extension) {
-	ec.exts = append(ec.exts, ext)
+func (proto *ExtProtocol) RegistExt(ext Extension) {
+	proto.exts = append(proto.exts, ext)
 }
 
-func (ec *ExtCenter) getMsgSender(id byte) *ExtMsgSender {
-	if ec.sender == nil {
-		ec.sender = &ExtMsgSender{stream: ec.stream}
+func (proto *ExtProtocol) getMsgSender(id byte) *ExtMsgSender {
+	if proto.sender == nil {
+		proto.sender = &ExtMsgSender{stream: proto.stream}
 	}
-	ec.sender.id = id
-	return ec.sender
+	proto.sender.id = id
+	return proto.sender
 }
 
-// SendHS sends handshake
-func (ec *ExtCenter) SendHS() error {
+// WriteHandshake sends handshake
+func (proto *ExtProtocol) WriteHandshake() error {
 	hs := make(map[string]interface{})
 	m := make(map[string]int)
 	putter := ExtHSPutter{hs}
-	for i, ext := range ec.exts {
+	for i, ext := range proto.exts {
 		ext.BeforeHandshake(putter)
 		m[ext.MapKey()] = i + 1
 	}
@@ -79,11 +79,11 @@ func (ec *ExtCenter) SendHS() error {
 	if err != nil {
 		return err
 	}
-	return ec.getMsgSender(0).SendBytes(b)
+	return proto.getMsgSender(0).SendBytes(b)
 }
 
 // HandlePayload handle extention message
-func (ec *ExtCenter) HandlePayload(payload []byte) error {
+func (proto *ExtProtocol) HandlePayload(payload []byte) error {
 	if payload[0] == 0 {
 		// handshake
 		var hs map[string]bencode.RawMessage
@@ -98,37 +98,37 @@ func (ec *ExtCenter) HandlePayload(payload []byte) error {
 			return errors.New("invalid handshake")
 		}
 
-		err = bencode.Unmarshal(rawm, &ec.m)
+		err = bencode.Unmarshal(rawm, &proto.m)
 		if err != nil {
 			return err
 		}
 
 		getter := ExtHSGetter{hs}
-		for i, ext := range ec.exts {
-			id, ok := ec.m[ext.MapKey()]
+		for i, ext := range proto.exts {
+			id, ok := proto.m[ext.MapKey()]
 			if !ok || id == 0 {
 				ext.Unsupport()
-				ec.exts[i] = nil
+				proto.exts[i] = nil
 				continue
 			}
 
-			err = ext.AfterHandshake(getter, ec.getMsgSender(id))
+			err = ext.AfterHandshake(getter, proto.getMsgSender(id))
 			if err != nil {
 				return err
 			}
 		}
 	} else {
-		if len(ec.m) == 0 {
+		if len(proto.m) == 0 {
 			return errors.New("have not handshake")
 		}
 		id := payload[0] - 1
-		if int(id) >= len(ec.exts) || ec.exts[id] == nil {
+		if int(id) >= len(proto.exts) || proto.exts[id] == nil {
 			return errors.New("unknown this extension id")
 		}
 
-		ext := ec.exts[id]
+		ext := proto.exts[id]
 
-		return ext.HandleMessage(payload[1:], ec.getMsgSender(ec.m[ext.MapKey()]))
+		return ext.HandleMessage(payload[1:], proto.getMsgSender(proto.m[ext.MapKey()]))
 	}
 
 	return nil
