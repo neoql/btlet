@@ -37,14 +37,18 @@ type Extension interface {
 
 // ExtCenter is extension center
 type ExtCenter struct {
-	exts []Extension
-	m    map[string]byte
+	stream Stream
+	exts   []Extension
+	m      map[string]byte
+	sender *ExtMsgSender
 }
 
 // NewExtCenter returns a new extension center
-func NewExtCenter() *ExtCenter {
+func NewExtCenter(stream Stream, exts ...Extension) *ExtCenter {
 	return &ExtCenter{
-		m: make(map[string]byte),
+		stream: stream,
+		exts:   exts,
+		m:      make(map[string]byte),
 	}
 }
 
@@ -53,8 +57,16 @@ func (ec *ExtCenter) RegistExt(ext Extension) {
 	ec.exts = append(ec.exts, ext)
 }
 
+func (ec *ExtCenter) getMsgSender(id byte) *ExtMsgSender {
+	if ec.sender == nil {
+		ec.sender = &ExtMsgSender{stream: ec.stream}
+	}
+	ec.sender.id = id
+	return ec.sender
+}
+
 // SendHS sends handshake
-func (ec *ExtCenter) SendHS(sender *MessageSender) error {
+func (ec *ExtCenter) SendHS() error {
 	hs := make(map[string]interface{})
 	m := make(map[string]int)
 	putter := ExtHSPutter{hs}
@@ -67,11 +79,11 @@ func (ec *ExtCenter) SendHS(sender *MessageSender) error {
 	if err != nil {
 		return err
 	}
-	return (&ExtMsgSender{0, sender}).SendBytes(b)
+	return ec.getMsgSender(0).SendBytes(b)
 }
 
 // HandlePayload handle extention message
-func (ec *ExtCenter) HandlePayload(payload []byte, sender *MessageSender) error {
+func (ec *ExtCenter) HandlePayload(payload []byte) error {
 	if payload[0] == 0 {
 		// handshake
 		var hs map[string]bencode.RawMessage
@@ -100,7 +112,7 @@ func (ec *ExtCenter) HandlePayload(payload []byte, sender *MessageSender) error 
 				continue
 			}
 
-			err = ext.AfterHandshake(getter, &ExtMsgSender{id, sender})
+			err = ext.AfterHandshake(getter, ec.getMsgSender(id))
 			if err != nil {
 				return err
 			}
@@ -116,7 +128,7 @@ func (ec *ExtCenter) HandlePayload(payload []byte, sender *MessageSender) error 
 
 		ext := ec.exts[id]
 
-		return ext.HandleMessage(payload[1:], &ExtMsgSender{ec.m[ext.MapKey()], sender})
+		return ext.HandleMessage(payload[1:], ec.getMsgSender(ec.m[ext.MapKey()]))
 	}
 
 	return nil
@@ -124,13 +136,13 @@ func (ec *ExtCenter) HandlePayload(payload []byte, sender *MessageSender) error 
 
 // ExtMsgSender used for send extension message
 type ExtMsgSender struct {
-	id byte
-	s  *MessageSender
+	id     byte
+	stream Stream
 }
 
 // SendBytes will send content
 func (sender *ExtMsgSender) SendBytes(content []byte) error {
-	return sender.s.SendBytes(ExtID, bytes.Join([][]byte{[]byte{sender.id}, content}, nil))
+	return WriteMessage(sender.stream, ExtID, bytes.Join([][]byte{[]byte{sender.id}, content}, nil))
 }
 
 // ExtHSPutter only can put entry into handshake

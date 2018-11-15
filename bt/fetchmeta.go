@@ -5,8 +5,6 @@ import (
 	"crypto/sha1"
 	"context"
 	"errors"
-	"net"
-	"time"
 
 	"github.com/neoql/btlet/bencode"
 	"github.com/neoql/btlet/tools"
@@ -15,45 +13,31 @@ import (
 // FetchMetadata fetch metadata from host.
 func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, error) {
 	// connect to peer
-	conn, err := net.DialTimeout("tcp", host, time.Second*15)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	session := NewSession(conn)
-
-	// handshake
 	var reserved uint64
 	SetExtReserved(&reserved)
-	opt, err := session.Handshake(&HSOption{
-		Reserved: reserved,
-		InfoHash: infoHash,
-		PeerID:   tools.RandomString(20),
-	})
-
+	stream, err := DialUseTCP(host, infoHash, tools.RandomString(20), reserved)
 	if err != nil {
 		return nil, err
 	}
 
+	defer stream.Close()
+
 	// peer send different info_hash
-	if opt.InfoHash != infoHash {
+	if stream.InfoHash() != infoHash {
 		return nil, errors.New("handshake failed: different info_hash")
 	}
 
-	if !CheckExtReserved(opt.Reserved) {
+	if !CheckExtReserved(stream.Reserved()) {
 		// not support extensions
 		return nil, errors.New("not support extensions")
 	}
 
-	sender := session.MessageSender()
-
-	center := NewExtCenter()
+	center := NewExtCenter(stream)
 
 	fmExt := NewFetchMetaExt(infoHash)
 	center.RegistExt(fmExt)
 
-	err = center.SendHS(sender)
+	err = center.SendHS()
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +49,7 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 		default:
 		}
 
-		message, err := session.NextMessage()
+		message, err := ReadMessage(stream)
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +58,7 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 			continue
 		}
 
-		err = center.HandlePayload(message[1:], sender)
+		err = center.HandlePayload(message[1:])
 		if err != nil {
 			return nil, err
 		}
