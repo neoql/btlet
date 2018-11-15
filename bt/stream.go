@@ -9,17 +9,12 @@ import (
 	"time"
 )
 
-// BasicStream is a common stream.
-type BasicStream interface {
+// Stream is a BitProtocol stream
+type Stream interface {
 	io.Writer
 	io.Reader
 	io.Closer
 	Protocol() string
-}
-
-// Stream is a BitProtocol stream
-type Stream interface {
-	BasicStream
 	Reserved() uint64
 	InfoHash() string
 	PeerID() string
@@ -32,62 +27,60 @@ func DialUseTCP(host string, infohash, peerID string, reserved uint64) (Stream, 
 		return nil, err
 	}
 
-	basic, err := NewBasicStream(conn, Protocol)
+	stream := &implStream{conn: conn}
+	err = stream.handshake(infohash, peerID, reserved)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
 
-	if basic.Protocol() != Protocol {
+	if stream.Protocol() != Protocol {
 		conn.Close()
-		return nil, errors.New("unknown protocol")
-	}
-
-	stream := &implStream{BasicStream: basic}
-	err = stream.handshake(peerID, infohash, reserved)
-	if err != nil {
-		conn.Close()
-		return nil, err
+		return nil, errors.New("unknown prorocol")
 	}
 
 	return stream, nil
 }
 
-type basicStream struct {
-	conn     net.Conn
+type implStream struct {
+	conn net.Conn
 	protocol string
+	reserved uint64
+	infoHash string
+	peerID   string
 }
 
-// NewBasicStream returns a BasicStream
-func NewBasicStream(conn net.Conn, protocol string) (BasicStream, error) {
-	stream := &basicStream{conn: conn}
+func (stream *implStream) handshake(infohash, peerID string, reserved uint64) error {
+	buf := bytes.NewBuffer(make([]byte, 0, 68))
 
-	buf := make([]byte, 1, len(protocol)+1)
-	buf[0] = byte(len(protocol))
-	buf = append(buf, []byte(protocol)...)
+	buf.WriteByte(19)
+	buf.WriteString(Protocol)
+	binary.Write(buf, binary.BigEndian, reserved)
+	buf.WriteString(infohash)
+	buf.WriteString(peerID)
 
-	_, err := io.Copy(stream, bytes.NewReader(buf))
+	_, err := io.CopyN(stream, buf, 68)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var length uint32
-
-	err = binary.Read(stream, binary.BigEndian, &length)
+	buf.Reset()
+	_, err = io.CopyN(buf, stream, 68)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	buf = make([]byte, length)
-	_, err = io.ReadFull(stream, buf)
-	if err != nil {
-		return nil, err
-	}
-	stream.protocol = string(buf)
-	return stream, nil
+	b := buf.Bytes()
+
+	stream.protocol = string(b[1:20])
+	stream.reserved = binary.BigEndian.Uint64(b[20:28])
+	stream.infoHash = string(b[28:48])
+	stream.peerID = string(b[48:])
+
+	return nil
 }
 
-func (stream *basicStream) Write(p []byte) (n int, err error) {
+func (stream *implStream) Write(p []byte) (n int, err error) {
 	err = stream.conn.SetWriteDeadline(time.Now().Add(time.Second * 10))
 	if err != nil {
 		return
@@ -96,7 +89,7 @@ func (stream *basicStream) Write(p []byte) (n int, err error) {
 	return stream.conn.Write(p)
 }
 
-func (stream *basicStream) Read(p []byte) (n int, err error) {
+func (stream *implStream) Read(p []byte) (n int, err error) {
 	err = stream.conn.SetReadDeadline(time.Now().Add(time.Second * 10))
 	if err != nil {
 		return
@@ -105,46 +98,12 @@ func (stream *basicStream) Read(p []byte) (n int, err error) {
 	return stream.conn.Read(p)
 }
 
-func (stream *basicStream) Close() error {
+func (stream *implStream) Close() error {
 	return stream.conn.Close()
 }
 
-func (stream *basicStream) Protocol() string {
+func (stream *implStream) Protocol() string {
 	return stream.protocol
-}
-
-type implStream struct {
-	BasicStream
-	reserved uint64
-	infoHash string
-	peerID   string
-}
-
-func (stream *implStream) handshake(peerID, infohash string, reserved uint64) error {
-	err := binary.Write(stream, binary.BigEndian, reserved)
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, 0, 40)
-	buf = append(buf, []byte(infohash)...)
-	buf = append(buf, []byte(peerID)...)
-
-	_, err = io.Copy(stream, bytes.NewReader(buf))
-	if err != nil {
-		return err
-	}
-
-	err = binary.Read(stream, binary.BigEndian, &stream.reserved)
-	if err != nil {
-		return err
-	}
-
-	_, err = io.ReadFull(stream, buf)
-	stream.infoHash = string(buf[0:20])
-	stream.peerID = string(buf[20:40])
-
-	return nil
 }
 
 func (stream *implStream) Reserved() uint64 {
