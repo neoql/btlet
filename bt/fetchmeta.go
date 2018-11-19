@@ -49,7 +49,7 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 		default:
 		}
 
-		message, err := ReadMessage(stream)
+		message, err := ReadMessageWithLimit(stream, 99999)
 		if err != nil {
 			return nil, err
 		}

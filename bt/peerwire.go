@@ -1,6 +1,7 @@
 package bt
 
 import (
+	"fmt"
 	"bytes"
 	"encoding/binary"
 	"io"
@@ -18,6 +19,25 @@ func ReadMessage(stream Stream) ([]byte, error) {
 	err := binary.Read(stream, binary.BigEndian, &length)
 	if err != nil {
 		return nil, err
+	}
+
+	buf := make([]byte, length)
+	_, err = io.ReadFull(stream, buf)
+
+	return buf, err
+}
+
+// ReadMessageWithLimit read a message from stream
+func ReadMessageWithLimit(stream Stream, limit uint32) ([]byte, error) {
+	var length uint32
+
+	err := binary.Read(stream, binary.BigEndian, &length)
+	if err != nil {
+		return nil, err
+	}
+
+	if length > limit {
+		return nil, fmt.Errorf("message length is[%d] too large", length)
 	}
 
 	buf := make([]byte, length)
