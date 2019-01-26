@@ -1,9 +1,9 @@
 package bt
 
 import (
-	"fmt"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
@@ -12,26 +12,31 @@ const (
 	Protocol = "BitTorrent protocol"
 )
 
+// Flusher allow flush
+type Flusher interface {
+	Flush() error
+}
+
 // ReadMessage read a message from stream
-func ReadMessage(stream Stream) ([]byte, error) {
+func ReadMessage(reader io.Reader) ([]byte, error) {
 	var length uint32
 
-	err := binary.Read(stream, binary.BigEndian, &length)
+	err := binary.Read(reader, binary.BigEndian, &length)
 	if err != nil {
 		return nil, err
 	}
 
 	buf := make([]byte, length)
-	_, err = io.ReadFull(stream, buf)
+	_, err = io.ReadFull(reader, buf)
 
 	return buf, err
 }
 
 // ReadMessageWithLimit read a message from stream
-func ReadMessageWithLimit(stream Stream, limit uint32) ([]byte, error) {
+func ReadMessageWithLimit(reader io.Reader, limit uint32) ([]byte, error) {
 	var length uint32
 
-	err := binary.Read(stream, binary.BigEndian, &length)
+	err := binary.Read(reader, binary.BigEndian, &length)
 	if err != nil {
 		return nil, err
 	}
@@ -41,44 +46,51 @@ func ReadMessageWithLimit(stream Stream, limit uint32) ([]byte, error) {
 	}
 
 	buf := make([]byte, length)
-	_, err = io.ReadFull(stream, buf)
+	_, err = io.ReadFull(reader, buf)
 
 	return buf, err
 }
 
 // ReadMessageInto will reset the buffer and read message into it
-func ReadMessageInto(stream Stream, buf *bytes.Buffer) error {
+func ReadMessageInto(reader io.Reader, buf *bytes.Buffer) error {
 	buf.Reset()
 
 	var length uint32
 
-	err := binary.Read(stream, binary.BigEndian, &length)
+	err := binary.Read(reader, binary.BigEndian, &length)
 	if err != nil {
 		return err
 	}
 
 	buf.Grow(int(length))
-	_, err = io.CopyN(buf, stream, int64(length))
+	_, err = io.CopyN(buf, reader, int64(length))
 
 	return err
 }
 
 // WriteMessage will write a message into stream
-func WriteMessage(stream Stream, id byte, payload []byte) error {
+func WriteMessage(writer io.Writer, id byte, payload []byte) error {
 	var length uint32
 
 	length = uint32(len(payload) + 1)
-	err := binary.Write(stream, binary.BigEndian, length)
+	err := binary.Write(writer, binary.BigEndian, length)
 	if err != nil {
 		return nil
 	}
 
-	_, err = stream.Write([]byte{id})
-	if err != nil {
-		return err
+	if w, ok := writer.(io.ByteWriter); ok {
+		err = w.WriteByte(id)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err = writer.Write([]byte{id})
+		if err != nil {
+			return err
+		}
 	}
 
-	_, err = io.Copy(stream, bytes.NewReader(payload))
+	_, err = writer.Write(payload)
 	if err != nil {
 		return err
 	}

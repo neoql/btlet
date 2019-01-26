@@ -131,7 +131,7 @@ type metaTrackFetcher struct {
 }
 
 func (mtf *metaTrackFetcher) RegistExts() {
-	mtf.extCenter = bt.NewExtProtocol(mtf.stream)
+	mtf.extCenter = bt.NewExtProtocol()
 	trlist, ok := mtf.pipe.PullTrackerList(mtf.infoHash)
 	mtf.txExt = bt.NewTexExtension(trlist)
 	mtf.extCenter.RegistExt(mtf.txExt)
@@ -157,7 +157,7 @@ func (mtf *metaTrackFetcher) MainLoop(ctx context.Context) error {
 			continue
 		}
 
-		err = mtf.extCenter.HandlePayload(message[1:])
+		err = mtf.extCenter.HandlePayload(message[1:], mtf.stream)
 		if err != nil {
 			return err
 		}

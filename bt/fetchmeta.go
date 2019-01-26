@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"errors"
+	"bufio"
 
 	"github.com/neoql/btlet/bencode"
 	"github.com/neoql/btlet/tools"
@@ -32,12 +33,18 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 		return nil, errors.New("not support extensions")
 	}
 
-	proto := NewExtProtocol(stream)
+	proto := NewExtProtocol()
+	r := bufio.NewReader(stream)
+	w := bufio.NewWriter(stream)
 
 	fmExt := NewFetchMetaExt(infoHash)
 	proto.RegistExt(fmExt)
 
-	err = proto.WriteHandshake()
+	err = proto.WriteHandshake(w)
+	if err != nil {
+		return nil, err
+	}
+	err = w.Flush()
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +56,7 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 		default:
 		}
 
-		message, err := ReadMessageWithLimit(stream, 99999)
+		message, err := ReadMessageWithLimit(r, 99999)
 		if err != nil {
 			return nil, err
 		}
@@ -58,7 +65,11 @@ func FetchMetadata(ctx context.Context, infoHash string, host string) (RawMeta, 
 			continue
 		}
 
-		err = proto.HandlePayload(message[1:])
+		err = proto.HandlePayload(message[1:], w)
+		if err != nil {
+			return nil, err
+		}
+		err = w.Flush()
 		if err != nil {
 			return nil, err
 		}
@@ -129,24 +140,24 @@ func (fm *FetchMetaExt) AfterHandshake(hs ExtHSGetter, sender *ExtMsgSender) err
 	piecesNum := getPiecesNum(size)
 	fm.pieces = make([][]byte, piecesNum)
 
-	go func() {
-		for i := 0; i < piecesNum; i++ {
-			m := map[string]int{
-				"msg_type": request,
-				"piece":    i,
-			}
 
-			b, err := bencode.Marshal(m)
-			if err != nil {
-				return
-			}
-
-			err = sender.SendBytes(b)
-			if err != nil {
-				return
-			}
+	for i := 0; i < piecesNum; i++ {
+		m := map[string]int{
+			"msg_type": request,
+			"piece":    i,
 		}
-	}()
+
+		b, err := bencode.Marshal(m)
+		if err != nil {
+			return err
+		}
+
+		err = sender.SendBytes(b)
+		if err != nil {
+			return err
+		}
+	}
+
 
 	return nil
 }

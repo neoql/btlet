@@ -51,7 +51,9 @@ type implStream struct {
 }
 
 func (stream *implStream) handshake(infohash, peerID string, reserved uint64) error {
-	buf := bytes.NewBuffer(make([]byte, 0, 68))
+	b := make([]byte, 68)
+
+	buf := bytes.NewBuffer(b[:0])
 
 	buf.WriteByte(19)
 	buf.WriteString(Protocol)
@@ -59,18 +61,16 @@ func (stream *implStream) handshake(infohash, peerID string, reserved uint64) er
 	buf.WriteString(infohash)
 	buf.WriteString(peerID)
 
-	_, err := io.CopyN(stream, buf, 68)
+	_, err := stream.Write(buf.Bytes())
 	if err != nil {
 		return err
 	}
 
 	buf.Reset()
-	_, err = io.CopyN(buf, stream, 68)
+	_, err = io.ReadFull(stream, b)
 	if err != nil {
 		return err
 	}
-
-	b := buf.Bytes()
 
 	stream.protocol = string(b[1:20])
 	stream.reserved = binary.BigEndian.Uint64(b[20:28])
