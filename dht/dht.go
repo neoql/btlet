@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/neoql/btlet/bencode"
+	"github.com/neoql/workerpool"
 )
 
 var defaultBootstrap = []string{
@@ -68,6 +69,7 @@ func (core *Host) Serv(ctx context.Context, disposer MessageDisposer) (err error
 
 	proxy := newDisposerProxy(disposer, core.maxWorkers)
 	buf := make([]byte, 8196)
+	proxy.wp.Start()
 
 loop:
 	for {
@@ -155,87 +157,80 @@ func (h *handle) NodeID() string {
 }
 
 type disposerProxy struct {
-	disposeQuery          func(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error
-	disposeResponse       func(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error
-	disposeError          func(src *net.UDPAddr, transactionID string, code int, describe string) error
-	disposeUnknownMessage func(src *net.UDPAddr, message bencode.RawMessage) error
+	disposer MessageDisposer
+	wp       workerpool.WorkerPool
 }
 
 func newDisposerProxy(disposer MessageDisposer, maxWorkers int) *disposerProxy {
-	proxy := &disposerProxy{}
-	if maxWorkers <= 0 {
-		proxy.disposeQuery = func(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
-			go disposer.DisposeQuery(src, transactionID, q, args)
-			return nil
-		}
-
-		proxy.disposeResponse = func(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
-			go disposer.DisposeResponse(src, transactionID, resp)
-			return nil
-		}
-
-		proxy.disposeError = func(addr *net.UDPAddr, transactionID string, code int, describe string) error {
-			go disposer.DisposeError(addr, transactionID, code, describe)
-			return nil
-		}
-
-		proxy.disposeUnknownMessage = func(src *net.UDPAddr, message bencode.RawMessage) error {
-			go disposer.DisposeUnknownMessage(src, message)
-			return nil
-		}
-	} else {
-		lmt := make(chan struct{}, maxWorkers)
-		proxy.disposeQuery = func(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
-			lmt <- struct{}{}
-			go func() {
-				disposer.DisposeQuery(src, transactionID, q, args)
-				<-lmt
-			}()
-			return nil
-		}
-
-		proxy.disposeResponse = func(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
-			lmt <- struct{}{}
-			go func() {
-				disposer.DisposeResponse(src, transactionID, resp)
-				<-lmt
-			}()
-			return nil
-		}
-
-		proxy.disposeError = func(addr *net.UDPAddr, transactionID string, code int, describe string) error {
-			lmt <- struct{}{}
-			go func() {
-				disposer.DisposeError(addr, transactionID, code, describe)
-				<-lmt
-			}()
-			return nil
-		}
-
-		proxy.disposeUnknownMessage = func(src *net.UDPAddr, message bencode.RawMessage) error {
-			lmt <- struct{}{}
-			go func() {
-				disposer.DisposeUnknownMessage(src, message)
-				<-lmt
-			}()
-			return nil
-		}
+	proxy := &disposerProxy{
+		disposer: disposer,
+		wp:       workerpool.New(maxWorkers, time.Second*10),
 	}
+
 	return proxy
 }
 
 func (p *disposerProxy) DisposeQuery(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
-	return p.disposeQuery(src, transactionID, q, args)
+	p.wp.Spawn(p.fnDisposeQuery, &queryArgv{src: src, transactionID: transactionID, q: q, args: args})
+	return nil
 }
 
 func (p *disposerProxy) DisposeResponse(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
-	return p.disposeResponse(src, transactionID, resp)
+	p.wp.Spawn(p.fnDisposeResponse, &respArgv{src: src, transactionID: transactionID, resp: resp})
+	return nil
 }
 
 func (p *disposerProxy) DisposeError(src *net.UDPAddr, transactionID string, code int, describe string) error {
-	return p.disposeError(src, transactionID, code, describe)
+	p.wp.Spawn(p.fnDisposeError, &errorArgv{src: src, transactionID: transactionID, code: code, describe: describe})
+	return nil
 }
 
 func (p *disposerProxy) DisposeUnknownMessage(src *net.UDPAddr, message bencode.RawMessage) error {
-	return p.disposeUnknownMessage(src, message)
+	p.wp.Spawn(p.fnDisposeUnknownMessage, &unknownMessageArgv{src: src, message: message})
+	return nil
+}
+
+func (p *disposerProxy) fnDisposeQuery(argv workerpool.Argv) {
+	a := argv.(*queryArgv)
+	p.disposer.DisposeQuery(a.src, a.transactionID, a.q, a.args)
+}
+
+func (p *disposerProxy) fnDisposeResponse(argv workerpool.Argv) {
+	a := argv.(*respArgv)
+	p.disposer.DisposeResponse(a.src, a.transactionID, a.resp)
+}
+
+func (p *disposerProxy) fnDisposeError(argv workerpool.Argv) {
+	a := argv.(*errorArgv)
+	p.disposer.DisposeError(a.src, a.transactionID, a.code, a.describe)
+}
+
+func (p *disposerProxy) fnDisposeUnknownMessage(argv workerpool.Argv) {
+	a := argv.(*unknownMessageArgv)
+	p.disposer.DisposeUnknownMessage(a.src, a.message)
+}
+
+type queryArgv struct {
+	q             string
+	src           *net.UDPAddr
+	args          bencode.RawMessage
+	transactionID string
+}
+
+type respArgv struct {
+	src           *net.UDPAddr
+	resp          bencode.RawMessage
+	transactionID string
+}
+
+type errorArgv struct {
+	src           *net.UDPAddr
+	transactionID string
+	code          int
+	describe      string
+}
+
+type unknownMessageArgv struct {
+	src     *net.UDPAddr
+	message bencode.RawMessage
 }

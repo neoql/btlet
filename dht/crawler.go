@@ -40,6 +40,7 @@ func NewSybilCrawler(host string) *SybilCrawler {
 	return &SybilCrawler{
 		host:   host,
 		nodeID: tools.RandomString(20),
+		maxWorkers: 65535,
 	}
 }
 
