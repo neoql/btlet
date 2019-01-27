@@ -12,11 +12,6 @@ const (
 	Protocol = "BitTorrent protocol"
 )
 
-// Flusher allow flush
-type Flusher interface {
-	Flush() error
-}
-
 // ReadMessage read a message from stream
 func ReadMessage(reader io.Reader) ([]byte, error) {
 	var length uint32

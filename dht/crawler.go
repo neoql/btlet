@@ -50,7 +50,7 @@ func (crawler *SybilCrawler) SetMaxWorkers(n int) {
 
 // Crawl ovrride Crawler.Crawl
 func (crawler *SybilCrawler) Crawl(ctx context.Context, callback CrawCallback) error {
-	core, err := NewCore(crawler.host)
+	core, err := NewHost(crawler.host)
 	if err != nil {
 		return err
 	}

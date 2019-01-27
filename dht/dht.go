@@ -28,14 +28,14 @@ type MessageDisposer interface {
 	DisposeUnknownMessage(src *net.UDPAddr, message bencode.RawMessage) error
 }
 
-// Core is the core of dht.
-type Core struct {
+// Host is the core of dht.
+type Host struct {
 	conn       *net.UDPConn
 	maxWorkers int
 }
 
-// NewCore returns a new Core instance.
-func NewCore(host string) (*Core, error) {
+// NewHost returns a new Core instance.
+func NewHost(host string) (*Host, error) {
 	addr, err := net.ResolveUDPAddr("udp", host)
 	if err != nil {
 		return nil, err
@@ -46,24 +46,24 @@ func NewCore(host string) (*Core, error) {
 		return nil, err
 	}
 
-	return &Core{
+	return &Host{
 		conn: conn,
 	}, nil
 }
 
 // SetMaxWorkers set the max goroutine will be create to dispose dht message.
 // If maxWorkers smaller than 0. it won't set upper limit.
-func (core *Core) SetMaxWorkers(n int) {
+func (core *Host) SetMaxWorkers(n int) {
 	core.maxWorkers = n
 }
 
 // Addr returns the Addr of self.
-func (core *Core) Addr() net.Addr {
+func (core *Host) Addr() net.Addr {
 	return core.conn.LocalAddr()
 }
 
 // Serv starts serving.
-func (core *Core) Serv(ctx context.Context, disposer MessageDisposer) (err error) {
+func (core *Host) Serv(ctx context.Context, disposer MessageDisposer) (err error) {
 	defer core.conn.Close()
 
 	proxy := newDisposerProxy(disposer, core.maxWorkers)
@@ -76,7 +76,7 @@ loop:
 			break loop
 		default:
 		}
-	
+
 		n, addr, err := core.conn.ReadFromUDP(buf)
 		if err != nil {
 			// TODO: handle error
@@ -89,7 +89,7 @@ loop:
 }
 
 // SendMessage will send message to the node.
-func (core *Core) SendMessage(dst *net.UDPAddr, msg interface{}) error {
+func (core *Host) SendMessage(dst *net.UDPAddr, msg interface{}) error {
 	data, err := bencode.Marshal(msg)
 	if err != nil {
 		// TODO: handle error
@@ -105,7 +105,7 @@ func (core *Core) SendMessage(dst *net.UDPAddr, msg interface{}) error {
 	return nil
 }
 
-func (core *Core) disposeMessage(disposer MessageDisposer, addr *net.UDPAddr, data []byte) (err error) {
+func (core *Host) disposeMessage(disposer MessageDisposer, addr *net.UDPAddr, data []byte) (err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			// TODO: handle error
@@ -134,7 +134,7 @@ func (core *Core) disposeMessage(disposer MessageDisposer, addr *net.UDPAddr, da
 }
 
 // Handle returns a handle
-func (core *Core) Handle(nodeID string) Handle {
+func (core *Host) Handle(nodeID string) Handle {
 	return &handle{
 		core:   core,
 		nodeID: nodeID,
@@ -142,7 +142,7 @@ func (core *Core) Handle(nodeID string) Handle {
 }
 
 type handle struct {
-	core   *Core
+	core   *Host
 	nodeID string
 }
 
