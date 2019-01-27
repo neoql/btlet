@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/neoql/btlet/bencode"
@@ -108,21 +109,22 @@ func (disposer *sybilMessageDisposer) DisposeUnknownMessage(src *net.UDPAddr, me
 
 type sybilTransaction struct {
 	id           string
-	lock         sync.RWMutex
-	target       string
+	target       atomic.Value
 	filter       *nodeFilter
 	crawCallback CrawCallback
 	finish       chan struct{}
 }
 
 func newSybilTransaction(id string, callback CrawCallback) *sybilTransaction {
-	return &sybilTransaction{
+	t := &sybilTransaction{
 		id:           tools.RandomString(2),
-		target:       tools.RandomString(20),
 		filter:       newNodeFilter(8 * 1024 * 1024),
 		crawCallback: callback,
 		finish:       make(chan struct{}),
 	}
+	t.target.Store(tools.RandomString(20))
+
+	return t
 }
 
 func (transaction *sybilTransaction) ID() string {
@@ -134,9 +136,7 @@ func (transaction *sybilTransaction) ShelfLife() time.Duration {
 }
 
 func (transaction *sybilTransaction) Target() string {
-	transaction.lock.RLock()
-	defer transaction.lock.RUnlock()
-	return transaction.target
+	return transaction.target.Load().(string)
 }
 
 func (transaction *sybilTransaction) OnLaunch(handle Handle) {
@@ -272,10 +272,7 @@ func (transaction *sybilTransaction) OnTimeout(handle Handle) bool {
 }
 
 func (transaction *sybilTransaction) changeTarget() {
-	transaction.lock.Lock()
-	defer transaction.lock.Unlock()
-
-	transaction.target = tools.RandomString(20)
+	transaction.target.Store(tools.RandomString(20))
 }
 
 func (transaction *sybilTransaction) OnFinish(handle Handle) {
