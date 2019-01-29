@@ -171,22 +171,22 @@ func newDisposerProxy(disposer MessageDisposer, maxWorkers int) *disposerProxy {
 }
 
 func (p *disposerProxy) DisposeQuery(src *net.UDPAddr, transactionID string, q string, args bencode.RawMessage) error {
-	p.wp.Spawn(p.fnDisposeQuery, &queryArgv{src: src, transactionID: transactionID, q: q, args: args})
+	p.wp.WaitSpawn(p.fnDisposeQuery, &queryArgv{src: src, transactionID: transactionID, q: q, args: args})
 	return nil
 }
 
 func (p *disposerProxy) DisposeResponse(src *net.UDPAddr, transactionID string, resp bencode.RawMessage) error {
-	p.wp.Spawn(p.fnDisposeResponse, &respArgv{src: src, transactionID: transactionID, resp: resp})
+	p.wp.WaitSpawn(p.fnDisposeResponse, &respArgv{src: src, transactionID: transactionID, resp: resp})
 	return nil
 }
 
 func (p *disposerProxy) DisposeError(src *net.UDPAddr, transactionID string, code int, describe string) error {
-	p.wp.Spawn(p.fnDisposeError, &errorArgv{src: src, transactionID: transactionID, code: code, describe: describe})
+	p.wp.WaitSpawn(p.fnDisposeError, &errorArgv{src: src, transactionID: transactionID, code: code, describe: describe})
 	return nil
 }
 
 func (p *disposerProxy) DisposeUnknownMessage(src *net.UDPAddr, message bencode.RawMessage) error {
-	p.wp.Spawn(p.fnDisposeUnknownMessage, &unknownMessageArgv{src: src, message: message})
+	p.wp.WaitSpawn(p.fnDisposeUnknownMessage, &unknownMessageArgv{src: src, message: message})
 	return nil
 }
 
