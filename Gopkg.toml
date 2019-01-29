@@ -32,3 +32,7 @@
 [prune]
   go-tests = true
   unused-packages = true
+
+[[constraint]]
+  name = "github.com/neoql/workerpool"
+  version = "0.0.1"

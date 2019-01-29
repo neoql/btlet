@@ -2,26 +2,43 @@
 
 
 [[projects]]
+  digest = "1:e57a08286ef58a16dc12b8d2cbe49cc6360124d7c419756aeae28464b2db4cab"
+  name = "github.com/neoql/workerpool"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "5c23a1fd360237f561122c9ce410b342fb6f2dc3"
+  version = "0.0.1"
+
+[[projects]]
+  digest = "1:919bb3aa6d9d0b67648c219fa4925312bc3c2872da19e818fa769e9c97a2b643"
   name = "github.com/spaolacci/murmur3"
   packages = ["."]
+  pruneopts = "UT"
   revision = "9f5d223c60793748f04a9d5b4b4eacddfc1f755d"
   version = "v1.1"
 
 [[projects]]
+  digest = "1:211f9cf21d532e2da93a420426d714af492743f4c602389cb0cd14ec8eebe256"
   name = "github.com/willf/bitset"
   packages = ["."]
-  revision = "d860f346b89450988a379d7d705e83c58d1ea227"
-  version = "v1.1.3"
+  pruneopts = "UT"
+  revision = "e553b05586428962bf7058d1044519d87ca72d74"
+  version = "v1.1.9"
 
 [[projects]]
+  digest = "1:306c3d1c8a92c718566e815d0c98d58071465036ec7e9b543cc4d6ae10c1c983"
   name = "github.com/willf/bloom"
   packages = ["."]
+  pruneopts = "UT"
   revision = "54e3b963ee1652b06c4562cb9b6020ebc6e36e59"
   version = "v2.0.3"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "7863fa790231f81e7f7179396f3a7d7445128d8a87d7adadd9f9e31bae818975"
+  input-imports = [
+    "github.com/neoql/workerpool",
+    "github.com/willf/bloom",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
